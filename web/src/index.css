@@ -1,0 +1,497 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* ── 动效令牌：统一节奏，保证全站动画手感一致 ── */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 360ms;
+  --font-sans: 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --color-ink-950: #06060c;
+  --color-ink-900: #0a0a13;
+  --color-ink-800: #11111c;
+  --color-ink-700: #191927;
+  --color-violet-glow: #a78bfa;
+  --color-cyan-glow: #22d3ee;
+  --radius-4xl: 2rem;
+  --animate-float: float 9s ease-in-out infinite;
+  --animate-shimmer: shimmer 2.6s linear infinite;
+  --animate-rise: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-pulse-soft: pulseSoft 3.6s ease-in-out infinite;
+}
+
+/* 移动端关闭持续动画，避免重绘导致背景闪烁 */
+@media (max-width: 768px), (prefers-reduced-motion: reduce) {
+  .aurora-orb {
+    animation: none !important;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -26px, 0) scale(1.06);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseSoft {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@layer base {
+  :root {
+    --liquid-blur: 26px;
+    --glass-blur: 22px;
+  }
+
+  @media (max-width: 768px) {
+    :root {
+      /* 移动端降低模糊半径，减轻 GPU 合成压力 */
+      --liquid-blur: 14px;
+      --glass-blur: 12px;
+    }
+  }
+
+  * {
+    border-color: color-mix(in oklab, white 10%, transparent);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    background-color: #06060c;
+  }
+
+  body {
+    @apply bg-[#06060c] text-slate-100 antialiased;
+    overflow-x: clip;
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(900px 600px at 12% -8%, rgba(139, 92, 246, 0.22), transparent 60%),
+      radial-gradient(760px 520px at 88% 4%, rgba(34, 211, 238, 0.16), transparent 62%),
+      radial-gradient(700px 520px at 50% 108%, rgba(236, 72, 153, 0.12), transparent 60%);
+    min-height: 100vh;
+  }
+
+  /* 可交互动效元素默认启用 GPU 合成，避免动画时重排导致卡顿 */
+  button,
+  a,
+  [role='tab'],
+  [role='menuitem'] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* 尊重系统「减少动效」偏好，无障碍友好 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  ::selection {
+    background: rgba(167, 139, 250, 0.35);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.24);
+    background-clip: content-box;
+  }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #f1f5f9;
+    -webkit-box-shadow: 0 0 0 1000px rgba(16, 16, 28, 0.9) inset;
+    transition: background-color 9999s ease-in-out 0s;
+  }
+}
+
+/* 移动端降低模糊半径，减少 GPU 合成压力与闪烁 */
+@media (max-width: 768px) {
+  .glass,
+  .glass-soft,
+  .glass-strong {
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+  }
+}
+
+/* 卡片内部若存在 filter 光斑，会与 backdrop-filter 争用同一合成层，
+   在部分 Android WebView 上表现为整块黑屏。这里统一隔离渲染上下文。 */
+@utility glass-safe {
+  isolation: isolate;
+  transform: translateZ(0);
+}
+
+@utility glass {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0.055));
+  backdrop-filter: blur(var(--glass-blur, 22px)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 22px)) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 20px 60px -28px rgba(0, 0, 0, 0.9),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+@utility glass-soft {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  backdrop-filter: blur(calc(var(--glass-blur, 22px) - 6px)) saturate(140%);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur, 22px) - 6px)) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+@utility glass-strong {
+  background: linear-gradient(160deg, rgba(23, 23, 38, 0.88), rgba(10, 10, 20, 0.94));
+  backdrop-filter: blur(calc(var(--glass-blur, 22px) + 8px)) saturate(160%);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur, 22px) + 8px)) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow:
+    0 30px 80px -30px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@utility text-gradient {
+  background: linear-gradient(100deg, #ffffff 8%, #c4b5fd 46%, #67e8f9 92%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility hairline {
+  background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  height: 1px;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   液态玻璃（Liquid Glass）体系
+   在毛玻璃基础上增加：光泽高光、边缘折射、内部流动光带
+   ═══════════════════════════════════════════════════════════ */
+
+@utility liquid {
+  position: relative;
+  isolation: isolate;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035) 42%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.06)),
+    radial-gradient(120% 80% at 12% -10%, rgba(167, 139, 250, 0.16), transparent 62%);
+  -webkit-backdrop-filter: blur(var(--liquid-blur, 26px)) saturate(180%) brightness(1.08);
+  backdrop-filter: blur(var(--liquid-blur, 26px)) saturate(180%) brightness(1.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.16) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.28) inset,
+    0 24px 64px -32px rgba(0, 0, 0, 0.94),
+    0 8px 24px -18px rgba(139, 92, 246, 0.5);
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.32s ease,
+    background 0.32s ease;
+}
+
+/* 顶部高光带：模拟玻璃边缘折射 */
+@utility liquid-sheen {
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+}
+
+/* 内部流动光带：悬停时缓慢扫过 */
+@utility liquid-flow {
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -40%;
+    background: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.1) 48%, rgba(167, 139, 250, 0.12) 54%, transparent 64%);
+    transform: translateX(-60%);
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+    z-index: -1;
+  }
+  &:hover::after {
+    opacity: 1;
+    animation: liquidSweep 1.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+@keyframes liquidSweep {
+  0% { transform: translateX(-60%); }
+  100% { transform: translateX(60%); }
+}
+
+/* ── 点击 / 悬停反馈 ── */
+@utility press {
+  transition:
+    transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    filter 0.16s ease,
+    box-shadow 0.2s ease;
+  &:hover { transform: translateY(-1px); }
+  &:active { transform: translateY(0) scale(0.972); filter: brightness(1.06); }
+}
+
+/* 按压缩放（无位移，用于卡片/按钮） */
+@utility press-sm {
+  transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  &:active { transform: scale(0.966); }
+}
+
+/* 涟漪容器 */
+@utility ripple-host {
+  position: relative;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@keyframes rippleExpand {
+  from { transform: scale(0); opacity: 0.45; }
+  to { transform: scale(2.6); opacity: 0; }
+}
+
+@utility ripple-dot {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.15) 60%, transparent 70%);
+  animation: rippleExpand 0.62s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* ── 过渡动画 ── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+  50% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0.12); }
+}
+
+@utility anim-fade-up {
+  animation: fadeInUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@utility anim-fade {
+  animation: fadeIn 0.4s ease both;
+}
+@utility anim-scale-in {
+  animation: scaleIn 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@utility anim-slide-right {
+  animation: slideInRight 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 列表逐项入场延迟 */
+@utility stagger {
+  & > * {
+    animation: fadeInUp 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  & > *:nth-child(1) { animation-delay: 0.02s; }
+  & > *:nth-child(2) { animation-delay: 0.06s; }
+  & > *:nth-child(3) { animation-delay: 0.1s; }
+  & > *:nth-child(4) { animation-delay: 0.14s; }
+  & > *:nth-child(5) { animation-delay: 0.18s; }
+  & > *:nth-child(6) { animation-delay: 0.22s; }
+  & > *:nth-child(7) { animation-delay: 0.26s; }
+  & > *:nth-child(8) { animation-delay: 0.3s; }
+  & > *:nth-child(n + 9) { animation-delay: 0.34s; }
+}
+
+/* 平滑滚动与焦点环 */
+@utility focus-ring {
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(10, 10, 20, 1), 0 0 0 4px rgba(167, 139, 250, 0.55);
+  }
+}
+
+
+/* 减少动效适配已统一在 @layer base 中定义 */
+
+/* ══════════════ 动效增强 ══════════════ */
+
+/* 内容区进场：轻微上浮 + 淡入，比纯淡入更有层次 */
+@keyframes contentEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+@utility anim-enter {
+  animation: contentEnter var(--dur-slow) var(--ease-out-expo) both;
+  will-change: opacity, transform;
+}
+
+/* 卡片悬停：轻微抬升 + 阴影扩散，位移控制在 2px 内避免抖动 */
+@utility hover-lift {
+  transition:
+    transform var(--dur-base) var(--ease-out-expo),
+    box-shadow var(--dur-base) var(--ease-out-expo),
+    border-color var(--dur-base) ease;
+  will-change: transform;
+  &:hover {
+    transform: translate3d(0, -2px, 0);
+  }
+}
+
+/* 液态玻璃质感：高光随指针移动的容器 */
+@utility liquid-glass {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      120px circle at var(--mx, 50%) var(--my, 0%),
+      rgba(255, 255, 255, 0.14),
+      transparent 65%
+    );
+    opacity: 0;
+    transition: opacity var(--dur-base) ease;
+    pointer-events: none;
+    z-index: 1;
+  }
+  &:hover::before {
+    opacity: 1;
+  }
+}
+
+/* 加载骨架：柔和的呼吸光带，比纯脉冲更耐看 */
+@keyframes skeletonSweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@utility skeleton-sheen {
+  background-image: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.03) 20%,
+    rgba(255, 255, 255, 0.1) 40%,
+    rgba(255, 255, 255, 0.03) 60%
+  );
+  background-size: 200% 100%;
+  animation: skeletonSweep 1.6s linear infinite;
+}
+
+/* 数字变化时的轻微弹跳，用于统计卡 */
+@keyframes numberPop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+@utility anim-pop {
+  animation: numberPop 0.42s var(--ease-out-back);
+}
+
+/* 焦点环动画：键盘导航时柔和展开 */
+@keyframes focusRingIn {
+  from {
+    box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.45);
+  }
+  to {
+    box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.16);
+  }
+}
+
+@utility focus-anim {
+  &:focus-visible {
+    animation: focusRingIn var(--dur-fast) var(--ease-out-expo) forwards;
+  }
+}

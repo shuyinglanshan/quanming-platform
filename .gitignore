@@ -1,0 +1,28 @@
+node_modules/
+server/node_modules/
+web/node_modules/
+web/dist/
+
+# ── 运行时数据（含用户数据，绝不入库）──
+server/data/db.json
+server/data/*.broken-*
+
+# ── 密钥材料（极重要：泄露等于全站密码可被反推）──
+server/data/keys/
+*.pem
+*.key
+pepper.key
+
+# 只保留目录占位，避免 clone 后目录缺失
+!server/data/keys/.gitkeep
+
+# ── 用户上传（含个人材料，不公开）──
+server/uploads/*
+!server/uploads/.gitkeep
+
+# ── 环境变量与本地文件 ──
+server/.env
+.env
+.env.local
+.server.log
+.server.pid

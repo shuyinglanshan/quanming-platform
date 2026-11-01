@@ -1,0 +1,14 @@
+{
+  "name": "quanming-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "小天才圈名平台 · 圈名归属登记与审核系统",
+  "author": "疏影阑珊",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix web install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix server start"
+  }
+}

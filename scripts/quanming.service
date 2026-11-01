@@ -1,0 +1,14 @@
+[Unit]
+Description=小天才圈名平台 (Quanming Registry)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/quanming/server
+ExecStart=/usr/local/bin/node index.js
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
