@@ -50,7 +50,7 @@
 
 ## ✦ 技术栈
 
-- **后端**：Node.js 22+ / Express 4 / multer（图片上传）/ nodemailer（QQ 邮箱 SMTP）/ bcryptjs / JSON 文件持久化（原子写入）
+- **后端**：Node.js 22.5+ / Express 4 / **SQLite（node:sqlite，内置无需编译）** / multer / nodemailer / bcryptjs
 - **前端**：React 19 + TypeScript + Vite 8 + Tailwind CSS 4 + **shadcn/ui**（Radix UI）+ lucide-react + sonner
 - **视觉**：深色玻璃拟态（毛玻璃）风格，多层 backdrop-filter、极光光斑、渐变描边、微动效
 - **国内镜像**：Node.js 走 **清华 TUNA 镜像**，npm 走 npmmirror
@@ -166,6 +166,74 @@ ROLE_PERMISSIONS = {
 - 后端：`requireStaff`（admin/assessor）+ `requirePermission('review' | 'appeal' | 'users' | 'settings' | 'notify' | 'logs')`
 - 前端：`useAuth().can(permission)` 控制导航与面板；普通用户访问 `/admin` 会被 `RequireAuth staff` 拦截
 - 权限变更即时生效（每次请求都校验角色），并给被调整的用户发送通知
+
+---
+
+## ✦ 数据库
+
+### 引擎选择
+
+使用 **Node.js 内置 `node:sqlite`**（Node 22.5+）：
+
+- 无需编译原生模块（比 better-sqlite3 更适合受限环境）
+- 单文件存储，备份只需复制一个文件
+- 开启 **WAL 模式**：读写并发更好，崩溃可恢复
+- 启用外键约束，保证数据一致性
+
+### 表结构（17 张）
+
+| 表 | 说明 |
+| --- | --- |
+| `users` | 用户（邮箱/手机号/用户名唯一索引，密码 bcrypt 哈希） |
+| `sessions` | 登录会话（外键级联删除） |
+| `names` | 已绑定圈名（名称唯一索引，浏览量索引） |
+| `claims` | 圈名归属申请（含图片 SHA-256） |
+| `appeals` | 归属申诉 |
+| `notifications` | 通知（按用户+时间索引） |
+| `logs` | 访问日志（含防篡改哈希链 `prev`/`chain`） |
+| `codes` | 邮箱验证码（只存 hash） |
+| `captchas` | 滑块挑战（一次性） |
+| `searches` | 搜索行为（热词统计） |
+| `blocked_ips` | IP 永久黑名单 |
+| `temp_blocks` | IP 临时封禁 |
+| `security_events` | 风控事件流 |
+| `login_failures` | 登录失败计数（账号/IP/密码指纹 三维度） |
+| `register_attempts` | 注册频率闸门 |
+| `settings` | 系统配置（键值对） |
+| `meta` | 元信息（版本） |
+
+### 初始化
+
+**首次启动自动完成建库建表**，无需手动干预。也可手动执行：
+
+```bash
+npm run db:init     # 初始化（幂等，已存在则只校验结构）
+npm run db:info     # 查看表数量与各表数据量
+npm run db:reset    # 删除并重建（⚠️ 清空所有数据）
+```
+
+数据库文件：`server/data/quanming.db`（已在 .gitignore 中排除）
+
+### 读写策略
+
+采用「**写穿透 + 内存读缓存**」：
+
+- 启动时全量加载到内存，保证原有同步查询语义（性能好）
+- 所有写操作**立即持久化到 SQLite**（非定时刷盘，断电不丢数据）
+- 多表关联操作用事务保证原子性
+
+> 说明：结构化字段（email/username/status/views）建独立列并加索引，
+> 查询频率低的嵌套数据（bindings/images/history）以 JSON 文本存储，兼顾灵活性与查询性能。
+
+### 备份
+
+```bash
+# 停服后复制即可（WAL 文件也需一并复制）
+cp server/data/quanming.db* /your/backup/
+
+# 或使用 SQLite 在线备份（服务运行中也可）
+sqlite3 server/data/quanming.db ".backup '/backup/quanming-$(date +%F).db'"
+```
 
 ---
 

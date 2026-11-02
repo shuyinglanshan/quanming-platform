@@ -9,6 +9,11 @@
     "dev:server": "npm --prefix server run dev",
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web run build",
-    "start": "npm --prefix server start"
+    "start": "npm --prefix server start",
+    "db:init": "npm --prefix server run db:init",
+    "db:info": "npm --prefix server run db:info"
+  },
+  "engines": {
+    "node": ">=22.5.0"
   }
 }

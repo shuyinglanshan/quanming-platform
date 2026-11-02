@@ -6,7 +6,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "db:init": "node scripts/init-db.js",
+    "db:info": "node scripts/init-db.js --info",
+    "db:reset": "node scripts/init-db.js --reset"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -15,5 +18,8 @@
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.16"
+  },
+  "engines": {
+    "node": ">=22.5.0"
   }
 }

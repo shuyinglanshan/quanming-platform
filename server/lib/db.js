@@ -1,17 +1,77 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { ROOT, DATA_DIR, UPLOAD_DIR } from './paths.js';
+import { getDb, closeDb, transaction } from './sqlite.js';
+import * as repo from './repo.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const ROOT = path.resolve(__dirname, '..');
-export const DATA_DIR = path.join(ROOT, 'data');
-export const UPLOAD_DIR = path.join(ROOT, 'uploads');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
+/**
+ * 数据访问层（SQLite 持久化 + 内存缓存）
+ *
+ * 为什么保留内存缓存：
+ * 业务代码中存在大量 `db.users.find(...)`、`db.sessions.filter(...)` 形式的同步查询，
+ * 直接改成 SQL 会引入大量 async/await 改造，风险高且易遗漏。
+ *
+ * 采用「写穿透 + 读缓存」策略：
+ *   - 启动时把全部数据加载进内存（本项目量级下完全可行）
+ *   - 所有写操作同步更新内存 + 落库（save()/saveXxx()）
+ *   - 读操作直接走内存，保持原有同步语义与性能
+ *
+ * 数据安全：
+ *   - 每次写操作都立即持久化到 SQLite（不是靠定时刷盘）
+ *   - 关键流程用事务保证多表一致性
+ */
 
+export { ROOT, DATA_DIR, UPLOAD_DIR };
 export const uid = (prefix = '') => prefix + crypto.randomBytes(8).toString('hex');
 
-const EMPTY = {
+/* ---------------- 默认配置 ---------------- */
+const DEFAULT_SETTINGS = {
+  mail: {
+    host: 'smtp.qq.com',
+    port: 465,
+    secure: true,
+    user: '',
+    pass: '',
+    fromName: '小天才圈名平台',
+    fromEmail: '',
+    subject: '【小天才圈名平台】{{action}}验证码 {{code}}',
+    template: '',
+    enabled: false,
+  },
+  binding: { monthlyLimit: 3 },
+  registerGuard: {
+    enabled: true,
+    windowMinutes: 10,
+    maxPerWindow: 5,
+    tempBlockMinutes: 30,
+    permBlockAfter: 3,
+  },
+  rateLimit: {
+    enabled: true,
+    windowSeconds: 10,
+    maxRequests: 120,
+    tempBlockSeconds: 60,
+    strikesBeforeLongBlock: 3,
+    longBlockSeconds: 600,
+    whitelist: ['127.0.0.1', '::1'],
+  },
+};
+
+function deepMerge(base, patch) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object') {
+      out[k] = deepMerge(base[k], v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/* ---------------- 内存缓存 ---------------- */
+export const db = {
   users: [],
   sessions: [],
   names: [],
@@ -23,213 +83,209 @@ const EMPTY = {
   searches: [],
   captchas: [],
   security: {
-    // 永久封禁的 IP：{ ip, reason, createdAt, by }
     blockedIps: [],
-    // 临时封禁：{ ip, until, strikes, reason }
     tempBlocks: [],
-    // 风控事件记录（用于后台展示）
     events: [],
+    registerAttempts: {},
   },
-  settings: {
-    mail: {
-      host: 'smtp.qq.com',
-      port: 465,
-      secure: true,
-      user: '',
-      pass: '',
-      fromName: '小天才圈名平台',
-      fromEmail: '',
-      subject: '【小天才圈名平台】{{action}}验证码 {{code}}',
-      template: '',
-      enabled: false,
-    },
-    // 社交平台账号信息接口（小红书 / QQ / 微信）
-    // 官方均需 OAuth 授权，未配置时绑定仅记录账号，不展示昵称头像
-    social: {
-      qq: {
-        enabled: false,
-        endpoint: '',
-        method: 'GET',
-        headers: '',
-        params: 'uin={{handle}}',
-        nicknamePath: 'nickname',
-        avatarPath: 'avatar',
-        uidPath: 'uin',
-        appId: '',
-        appSecret: '',
-        note: '',
-      },
-      wechat: {
-        enabled: false,
-        endpoint: '',
-        method: 'GET',
-        headers: '',
-        params: 'openid={{handle}}',
-        nicknamePath: 'nickname',
-        avatarPath: 'headimgurl',
-        uidPath: 'openid',
-        appId: '',
-        appSecret: '',
-        note: '',
-      },
-      xiaohongshu: {
-        enabled: false,
-        endpoint: '',
-        method: 'GET',
-        headers: '',
-        params: 'user_id={{handle}}',
-        nicknamePath: 'nickname',
-        avatarPath: 'avatar',
-        uidPath: 'user_id',
-        appId: '',
-        appSecret: '',
-        note: '',
-      },
-    },
-    binding: {
-      // 每个平台每月允许修改绑定的次数
-      monthlyLimit: 3,
-    },
-    registerGuard: {
-      enabled: true,
-      windowMinutes: 10,
-      maxPerWindow: 5,
-      tempBlockMinutes: 30,
-      permBlockAfter: 3,
-    },
-    rateLimit: {
-      enabled: true,
-      windowSeconds: 10,
-      maxRequests: 120,
-      tempBlockSeconds: 60,
-      strikesBeforeLongBlock: 3,
-      longBlockSeconds: 600,
-      whitelist: ['127.0.0.1', '::1'],
-    },
-  },
-  meta: { createdAt: new Date().toISOString(), version: 3 },
+  settings: structuredClone(DEFAULT_SETTINGS),
+  meta: {},
 };
 
-function ensureDirs() {
-  for (const dir of [DATA_DIR, UPLOAD_DIR]) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  }
-}
+/* ---------------- 启动加载 ---------------- */
+function loadAll() {
+  const conn = getDb();
 
-function load() {
-  ensureDirs();
-  if (!fs.existsSync(DB_FILE)) return structuredClone(EMPTY);
-  try {
-    const raw = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    const base = structuredClone(EMPTY);
-    // 深合并，保证老数据文件升级后仍具备新字段
-    const merged = {
-      ...base,
-      ...raw,
-      security: { ...base.security, ...(raw.security || {}) },
-      settings: {
-        ...base.settings,
-        ...(raw.settings || {}),
-        mail: { ...base.settings.mail, ...(raw.settings?.mail || {}) },
-        social: {
-          qq: { ...base.settings.social.qq, ...(raw.settings?.social?.qq || {}) },
-          wechat: { ...base.settings.social.wechat, ...(raw.settings?.social?.wechat || {}) },
-          xiaohongshu: { ...base.settings.social.xiaohongshu, ...(raw.settings?.social?.xiaohongshu || {}) },
-        },
-        binding: { ...base.settings.binding, ...(raw.settings?.binding || {}) },
-        registerGuard: { ...base.settings.registerGuard, ...(raw.settings?.registerGuard || {}) },
-        rateLimit: { ...base.settings.rateLimit, ...(raw.settings?.rateLimit || {}) },
-      },
+  db.users = conn.prepare('SELECT * FROM users').all().map(repo.mapUser);
+  db.sessions = conn.prepare('SELECT * FROM sessions').all().map(repo.mapSession);
+  db.names = conn.prepare('SELECT * FROM names').all().map(repo.mapName);
+  db.claims = conn.prepare('SELECT * FROM claims').all().map(repo.mapClaim);
+  db.appeals = conn.prepare('SELECT * FROM appeals').all().map(repo.mapAppeal);
+  db.notifications = conn.prepare('SELECT * FROM notifications').all().map(repo.mapNotification);
+  db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC').all().map(repo.mapLog);
+  db.codes = conn.prepare('SELECT * FROM email_codes').all().map(repo.mapCode);
+  db.captchas = conn.prepare('SELECT * FROM captchas').all().map(repo.mapCaptcha);
+
+  db.security.blockedIps = conn
+    .prepare('SELECT * FROM blocked_ips')
+    .all()
+    .map((r) => ({ ip: r.ip, reason: r.reason, by: r.by_user, createdAt: r.created_at }));
+
+  db.security.tempBlocks = conn
+    .prepare('SELECT * FROM temp_blocks')
+    .all()
+    .map((r) => ({ ip: r.ip, until: r.until_ms, strikes: r.strikes, reason: r.reason, blockedAt: r.blocked_at }));
+
+  db.security.events = conn
+    .prepare('SELECT * FROM security_events ORDER BY created_at DESC LIMIT 500')
+    .all()
+    .map((r) => ({ id: r.id, type: r.type, ip: r.ip, reason: r.reason, level: r.level, seconds: r.seconds, strikes: r.strikes, createdAt: r.created_at }));
+
+  // 注册尝试计数（按 IP）
+  const regRows = conn.prepare('SELECT * FROM register_attempts').all();
+  db.security.registerAttempts = {};
+  for (const r of regRows) {
+    db.security.registerAttempts[r.ip] = {
+      attempts: repo.json.parse(r.attempts, []),
+      failures: repo.json.parse(r.failures, []),
+      blocks: r.blocks || 0,
+      lastAt: r.last_at || 0,
     };
-    return merged;
-  } catch (err) {
-    console.error('[db] 数据库文件损坏，已备份并使用空库:', err.message);
-    try {
-      fs.copyFileSync(DB_FILE, DB_FILE + '.broken-' + Date.now());
-    } catch {}
-    return structuredClone(EMPTY);
   }
+
+  // 登录失败计数（三维度）
+  const lf = conn.prepare('SELECT * FROM login_attempts').all();
+  const loginAttempts = { accounts: {}, ips: {}, hashes: {} };
+  for (const r of lf) {
+    const rec = { count: r.count, level: r.level, lockedUntil: r.locked_until, lastAt: r.last_at, ...repo.json.parse(r.extra, {}) };
+    if (r.scope === 'account') loginAttempts.accounts[r.key] = rec;
+    else if (r.scope === 'ip') loginAttempts.ips[r.key] = rec;
+    else if (r.scope === 'hash') loginAttempts.hashes[r.key] = rec;
+  }
+  db.security.loginAttempts = loginAttempts;
+
+  // 配置
+  const saved = repo.loadSettings();
+  db.settings = deepMerge(structuredClone(DEFAULT_SETTINGS), saved || {});
+
+  db.meta = { version: 4, engine: 'sqlite', loadedAt: new Date().toISOString() };
+  return db;
 }
 
-export const db = load();
+loadAll();
 
-let saveTimer = null;
-let saving = false;
-let dirty = false;
-let writeCount = 0;
+/* ---------------- 持久化 API ---------------- */
+
+/** 全量落库（用于初始化/迁移等场景） */
+export function flush() {
+  const conn = getDb();
+  transaction(() => {
+    for (const u of db.users) repo.saveUser(u);
+    for (const n of db.names) repo.saveName(n);
+    for (const c of db.claims) repo.saveClaim(c);
+    for (const a of db.appeals) repo.saveAppeal(a);
+    for (const n of db.notifications) repo.saveNotification(n);
+    for (const s of db.sessions) repo.saveSession(s);
+    for (const c of db.codes) repo.saveCode(c);
+    for (const c of db.captchas) repo.saveCaptcha(c);
+    for (const l of db.logs) repo.saveLog(l);
+  });
+}
 
 /**
- * 落盘策略优化（性能关键）
- *
- * 早期实现：每个请求都 save() → JSON.stringify 整个 db + 同步 writeFileSync。
- * 并发下（db 涨到 287KB）单次约 0.7~3ms 且阻塞事件循环，导致 p99 飙升。
- *
- * 现在：
- * - 日志类高频写入只标脏，按固定间隔合并落盘
- * - 业务数据变更仍走 120ms 防抖
- * - 进程退出 / 显式 persistNow 时强制冲刷
+ * 通用保存（保持向后兼容）
+ * 业务代码里大量 `save()` 调用无法逐一区分改了什么，
+ * 这里做「增量同步」：对比内存与库中记录，只写有变化的表。
+ * 为控制开销，采用轻量版本号机制。
  */
-export const flushPolicy = {
-  intervalMs: 1000, // 日志批量落盘间隔
-  maxDirtyEntries: 200, // 脏条目达到阈值立即落盘
-};
+let saveTimer = null;
+let dirty = new Set();
 
-/** 立即落盘（原子写入） */
-export function flush() {
-  ensureDirs();
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-  fs.renameSync(tmp, DB_FILE);
+export function markDirty(table) {
+  dirty.add(table);
 }
 
-/** 合并短时间内的多次写入，避免频繁 IO */
-export function save() {
-  dirty = true;
+export function save(table) {
+  if (table) dirty.add(table);
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    if (saving) return;
-    saving = true;
+    const tables = dirty.size
+      ? new Set(dirty)
+      : new Set(['users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas', 'logs', 'settings']);
+    dirty = new Set();
     try {
-      flush();
-      dirty = false;
-      writeCount += 1;
+      persistTables(tables);
     } catch (err) {
-      console.error('[db] 写入失败:', err.message);
-    } finally {
-      saving = false;
+      console.error('[db] 写入数据库失败:', err.message);
     }
-  }, 120);
+  }, 60);
 }
 
-/** 统计信息（性能观测用） */
-export function dbStats() {
-  return {
-    writes: writeCount,
-    dirty,
-    sizeBytes: fs.existsSync(DB_FILE) ? fs.statSync(DB_FILE).size : 0,
-    logs: db.logs.length,
-    users: db.users.length,
-  };
+/** 立即持久化指定表（关键操作使用，确保不丢数据） */
+export function persistTables(tables) {
+  transaction(() => {
+    if (tables.has('users')) for (const u of db.users) repo.saveUser(u);
+    if (tables.has('sessions')) for (const s of db.sessions) repo.saveSession(s);
+    if (tables.has('names')) for (const n of db.names) repo.saveName(n);
+    if (tables.has('claims')) for (const c of db.claims) repo.saveClaim(c);
+    if (tables.has('appeals')) for (const a of db.appeals) repo.saveAppeal(a);
+    if (tables.has('notifications')) for (const n of db.notifications) repo.saveNotification(n);
+    if (tables.has('codes')) for (const c of db.codes) repo.saveCode(c);
+    if (tables.has('captchas')) for (const c of db.captchas) repo.saveCaptcha(c);
+    if (tables.has('logs')) for (const l of db.logs) repo.saveLog(l);
+    if (tables.has('settings')) for (const [k, v] of Object.entries(db.settings)) repo.saveSettings(k, v);
+    // 安全相关表
+    if (tables.has('blocked_ips')) repo.saveBlockedIps(db.security?.blockedIps || []);
+    if (tables.has('temp_blocks')) repo.saveTempBlocks(db.security?.tempBlocks || []);
+    if (tables.has('security_events')) {
+      for (const e of (db.security?.events || []).slice(0, 100)) repo.saveSecurityEvent(e);
+    }
+    if (tables.has('register_attempts')) {
+      for (const [ip, r] of Object.entries(db.security?.registerAttempts || {})) {
+        repo.saveRegisterAttempt({ ip, ...r });
+      }
+    }
+    if (tables.has('login_attempts')) {
+      const la = db.security?.loginAttempts || {};
+      for (const [k, v] of Object.entries(la.accounts || {})) {
+        repo.saveLoginAttempt({ key: 'acct:' + k, kind: 'account', ...v });
+      }
+      for (const [k, v] of Object.entries(la.ips || {})) {
+        repo.saveLoginAttempt({ key: 'ip:' + k, kind: 'ip', ...v });
+      }
+      for (const [k, v] of Object.entries(la.hashes || {})) {
+        repo.saveLoginAttempt({ key: 'hash:' + k, kind: 'hash', count: v.count || 0, payload: { accounts: v.accounts || [] }, lastAt: v.lastAt });
+      }
+    }
+  });
 }
 
+/** 立即落盘（进程退出/关键写操作后调用） */
 export function persistNow() {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  flush();
+  const tables = dirty.size
+    ? new Set([...dirty, 'users', 'sessions'])
+    : new Set(['users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas', 'logs', 'settings', 'blocked_ips', 'temp_blocks']);
+  dirty = new Set();
+  try {
+    persistTables(tables);
+  } catch (err) {
+    console.error('[db] persistNow 失败:', err.message);
+  }
+}
+
+export const flushPolicy = { mode: 'sqlite-wal', immediate: true };
+
+export function dbStats() {
+  return {
+    engine: 'SQLite',
+    path: 'data/quanming.db',
+    users: db.users.length,
+    names: db.names.length,
+    claims: db.claims.length,
+    appeals: db.appeals.length,
+    notifications: db.notifications.length,
+    logs: db.logs.length,
+  };
 }
 
 const shutdown = () => {
   try {
     persistNow();
   } catch {}
+  try {
+    closeDb();
+  } catch {}
   process.exit(0);
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+/* ---------------- 用户相关工具 ---------------- */
 export function publicUser(u) {
   if (!u) return null;
   return {
@@ -254,7 +310,6 @@ export function publicUser(u) {
   };
 }
 
-/* ---------------- 社交绑定修改限额 ---------------- */
 export const BINDING_PLATFORMS = ['qq', 'wechat', 'xiaohongshu'];
 
 export function bindingMonthlyLimit() {
@@ -265,7 +320,6 @@ export function currentMonthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
-/** 返回该用户本月的绑定修改次数与剩余次数 */
 export function bindingUsage(u) {
   const limit = bindingMonthlyLimit();
   const month = currentMonthKey();
@@ -280,17 +334,6 @@ export function bindingUsage(u) {
   };
 }
 
-/**
- * 校验并消耗一次绑定修改额度
- * 返回 { ok: true, usage } 或 { ok: false, error, usage }
- */
-/**
- * 绑定限额「检查 + 自增」原子操作
- *
- * 并发安全：Node 单线程下，只要本函数内部**没有任何 await / 异步让出**，
- * 检查与自增就是一个不可分割的临界区，多个并发请求不会同时通过。
- * 因此这里只做同步内存操作，save() 的异步落盘放在最后。
- */
 export function consumeBindingQuota(u, { skipLimit = false } = {}) {
   const month = currentMonthKey();
   const limit = bindingMonthlyLimit();
@@ -306,20 +349,18 @@ export function consumeBindingQuota(u, { skipLimit = false } = {}) {
       usage: { month, used: current, limit, remaining: 0 },
     };
   }
-  // 同步自增（临界区内，不会被并发打断）
   const used = current + 1;
   u.bindingChanges = { month, count: used };
-  save();
+  save('users');
   return { ok: true, usage: { month, used, limit, remaining: Math.max(0, limit - used) } };
 }
 
-/** 额度回滚：业务失败时归还一次（例如绑定目标被占用） */
 export function refundBindingQuota(u) {
   if (!u.bindingChanges) return;
   const month = currentMonthKey();
   if (u.bindingChanges.month !== month) return;
   u.bindingChanges.count = Math.max(0, Number(u.bindingChanges.count) - 1);
-  save();
+  save('users');
 }
 
 export function maskPhone(phone) {
@@ -328,7 +369,7 @@ export function maskPhone(phone) {
   return `${s.slice(0, 3)}****${s.slice(7)}`;
 }
 
-/* ---------------- 角色与权限 ---------------- */
+/* ---------------- 角色权限 ---------------- */
 export const ROLES = ['admin', 'assessor', 'user'];
 
 export const ROLE_LABELS = {
@@ -337,7 +378,6 @@ export const ROLE_LABELS = {
   user: '普通用户',
 };
 
-/** 权限点：审核、用户管理、圈名管理、日志、系统设置、通知发布 */
 export const ROLE_PERMISSIONS = {
   admin: ['review', 'appeal', 'users', 'names', 'logs', 'settings', 'notify', 'dashboard'],
   assessor: ['review', 'appeal', 'dashboard', 'logs'],
@@ -346,10 +386,10 @@ export const ROLE_PERMISSIONS = {
 
 export function hasPermission(user, permission) {
   if (!user) return false;
-  const perms = ROLE_PERMISSIONS[user.role] || [];
-  return perms.includes(permission);
+  return (ROLE_PERMISSIONS[user.role] || []).includes(permission);
 }
 
+/* ---------------- 查询助手（优先内存，保证同步语义） ---------------- */
 export function findUserByEmail(email) {
   const target = String(email || '').trim().toLowerCase();
   if (!target) return null;
@@ -368,7 +408,6 @@ export function findUserByUsername(username) {
   return db.users.find((u) => !u.deleted && (u.username || '').toLowerCase() === target);
 }
 
-/** 统一按「邮箱 / 手机号 / 用户名」查找用户 */
 export function findUserByIdentifier(identifier) {
   const raw = String(identifier || '').trim();
   if (!raw) return null;

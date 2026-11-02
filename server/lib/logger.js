@@ -19,14 +19,14 @@ function scheduleLogFlush() {
       clearTimeout(logFlushTimer);
       logFlushTimer = null;
     }
-    save();
+    save('logs');
     return;
   }
   if (logFlushTimer) return;
   logFlushTimer = setTimeout(() => {
     logFlushTimer = null;
     pendingLogs = 0;
-    save();
+    save('logs');
   }, 1000);
   if (typeof logFlushTimer.unref === 'function') logFlushTimer.unref();
 }
