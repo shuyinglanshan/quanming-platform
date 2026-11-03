@@ -1,10 +1,12 @@
 import express from 'express';
 import { db, save, uid } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
-import { upload, fileRecord } from '../lib/upload.js';
+import { upload, fileRecord, discardUploads, chargeUploadQuota, uploadByteQuota } from '../lib/upload.js';
+import { normalizeEvidenceImages } from '../lib/file-integrity.js';
 import { sanitizeText } from '../lib/util.js';
 import { eventLog } from '../lib/logger.js';
 import { notifyUser } from '../lib/notify.js';
+import { deleteAppeal } from '../lib/repo.js';
 
 const router = express.Router();
 
@@ -49,30 +51,41 @@ export function shapeAppeal(a, { withUser = false } = {}) {
 }
 
 /** 提交申诉（圈名详情页） */
-router.post('/', requireAuth, upload.array('images', 6), (req, res) => {
+router.post('/', requireAuth, uploadByteQuota, upload.array('images', 6), (req, res) => {
+  chargeUploadQuota(req);
+  // 业务校验失败时删除已落盘文件，避免垃圾文件遗留占用磁盘
+  const fail = (status, body) => {
+    discardUploads(req.files);
+    return res.status(status).json(body);
+  };
   const { nameId, reason, description = '', evidence = '' } = req.body || {};
   const safeReason = sanitizeText(reason, 80);
   const safeDesc = sanitizeText(description, 500);
   const name = db.names.find((n) => n.id === nameId || n.name === nameId);
-  if (!name || name.status === 'hidden') return res.status(404).json({ error: '该圈名不存在或已下架' });
-  if (name.ownerId === req.user.id) return res.status(400).json({ error: '你已是该圈名的归属者，无需申诉' });
-  if (!safeReason) return res.status(400).json({ error: '请选择申诉类型' });
+  if (!name || name.status === 'hidden') return fail(404, { error: '该圈名不存在或已下架' });
+  if (name.ownerId === req.user.id) return fail(400, { error: '你已是该圈名的归属者，无需申诉' });
+  if (!safeReason) return fail(400, { error: '请选择申诉类型' });
 
   let images = [];
   if (req.files?.length) images = req.files.map(fileRecord);
   else if (evidence) {
+    let parsed;
     try {
-      images = JSON.parse(evidence);
+      parsed = JSON.parse(evidence);
     } catch {
-      images = [];
+      parsed = null;
     }
+    // 服务端重新校验 URL、文件存在性与 SHA-256，不信任客户端提交的图片元数据
+    const checked = normalizeEvidenceImages(parsed, 6);
+    if (!checked.ok) return fail(400, { error: checked.error });
+    images = checked.images;
   }
-  if (!images.length) return res.status(400).json({ error: '请至少上传 1 张申诉证明材料' });
-  if (images.length > 6) return res.status(400).json({ error: '最多上传 6 张材料图片' });
-  if (String(description).length > 500) return res.status(400).json({ error: '补充说明请控制在 500 字以内' });
+  if (!images.length) return fail(400, { error: '请至少上传 1 张申诉证明材料' });
+  if (images.length > 6) return fail(400, { error: '最多上传 6 张材料图片' });
+  if (String(description).length > 500) return fail(400, { error: '补充说明请控制在 500 字以内' });
 
   const dup = db.appeals.find((a) => a.userId === req.user.id && a.nameId === name.id && a.status === 'pending');
-  if (dup) return res.status(409).json({ error: '你对该圈名的申诉正在审核中，请耐心等待结果' });
+  if (dup) return fail(409, { error: '你对该圈名的申诉正在审核中，请耐心等待结果' });
 
   const now = new Date().toISOString();
   const appeal = {
@@ -137,6 +150,8 @@ router.delete('/:id', requireAuth, (req, res) => {
   if (!appeal) return res.status(404).json({ error: '申诉不存在' });
   if (appeal.status !== 'pending') return res.status(400).json({ error: '仅可撤回审核中的申诉' });
   db.appeals = db.appeals.filter((a) => a.id !== appeal.id);
+  // 显式删除数据库行，否则进程重启后已撤回的申诉会重新出现
+  deleteAppeal(appeal.id);
   save();
   eventLog(req, '撤回圈名归属申诉', appeal.name);
   res.json({ ok: true });

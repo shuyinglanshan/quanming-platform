@@ -120,6 +120,20 @@ export const deleteSession = (token) => getDb().prepare('DELETE FROM sessions WH
 export const deleteSessionsByUser = (uid) => getDb().prepare('DELETE FROM sessions WHERE user_id=?').run(uid);
 export const pruneSessions = (before) => getDb().prepare('DELETE FROM sessions WHERE expires_at < ?').run(before);
 
+/**
+ * 全量替换会话表
+ * 注销、封禁、修改密码等场景会从内存移除会话，只有全量替换才能真正删除数据库行；
+ * 否则进程重启后已注销/已封禁的会话会被重新加载，导致会话复活。
+ */
+export function replaceSessions(list = []) {
+  const conn = getDb();
+  conn.prepare('DELETE FROM sessions').run();
+  const stmt = conn.prepare(
+    'INSERT INTO sessions (token,user_id,created_at,expires_at) VALUES (?,?,?,?)',
+  );
+  for (const s of list) stmt.run(s.token, s.userId, s.createdAt, s.expiresAt);
+}
+
 /* ================= names ================= */
 export function mapName(row) {
   if (!row) return null;
@@ -322,6 +336,15 @@ export function saveNotification(n) {
 }
 export const deleteNotification = (id) => getDb().prepare('DELETE FROM notifications WHERE id=?').run(id);
 
+/** 只保留最近 keep 条通知，避免数据库无限增长 */
+export function pruneNotifications(keep = 5000) {
+  getDb()
+    .prepare(
+      'DELETE FROM notifications WHERE id NOT IN (SELECT id FROM notifications ORDER BY created_at DESC LIMIT ?)',
+    )
+    .run(keep);
+}
+
 /* ================= logs ================= */
 export function mapLog(row) {
   if (!row) return null;
@@ -342,16 +365,17 @@ export function mapLog(row) {
     browser: row.browser || '',
     os: row.os || '',
     device: row.device || '',
-    prev: row.prev || null,
-    chain: row.chain || null,
+    prev: row.prev_hash || null,
+    chain: row.chain_hash || null,
+    v: row.v || null,
   };
 }
 
 export function saveLog(l) {
   getDb()
     .prepare(
-      `INSERT OR REPLACE INTO access_logs (id,ts,ip,method,path,status,ms,action,detail,level,user_id,email,ua,browser,os,device,prev,chain)
-       VALUES (@id,@ts,@ip,@method,@path,@status,@ms,@action,@detail,@level,@user_id,@email,@ua,@browser,@os,@device,@prev,@chain)`,
+      `INSERT OR REPLACE INTO access_logs (id,ts,ip,method,path,status,ms,action,detail,level,user_id,email,ua,browser,os,device,prev_hash,chain_hash,v)
+       VALUES (@id,@ts,@ip,@method,@path,@status,@ms,@action,@detail,@level,@user_id,@email,@ua,@browser,@os,@device,@prev,@chain,@v)`,
     )
     .run({
       id: l.id,
@@ -372,7 +396,20 @@ export function saveLog(l) {
       device: l.device || '',
       prev: l.prev || null,
       chain: l.chain || null,
+      v: l.v || 1,
     });
+}
+
+/** 只保留最近 keep 条访问日志 */
+export function pruneLogs(keep = 2000) {
+  const n = Math.max(1, int(keep, 2000));
+  getDb()
+    .prepare(
+      `DELETE FROM access_logs WHERE id NOT IN (
+         SELECT id FROM access_logs ORDER BY ts DESC, rowid DESC LIMIT ${n}
+       )`,
+    )
+    .run();
 }
 
 /* ================= codes ================= */
@@ -402,6 +439,20 @@ export function saveCode(c) {
     .run(c.id, c.email, c.domain || '', c.purpose, c.codeHash, c.createdAt, c.expiresAt, int(c.attempts), c.ip || '', bool(c.consumed));
 }
 export const deleteCode = (id) => getDb().prepare('DELETE FROM email_codes WHERE id=?').run(id);
+export const pruneCodes = (before) => getDb().prepare('DELETE FROM email_codes WHERE expires_at < ?').run(before);
+
+/** 全量替换验证码表（内存中已删除的过期/已用记录必须同步从数据库删除） */
+export function replaceCodes(list = []) {
+  const conn = getDb();
+  conn.prepare('DELETE FROM email_codes').run();
+  const stmt = conn.prepare(
+    `INSERT INTO email_codes (id,email,domain,purpose,code_hash,created_at,expires_at,attempts,ip,consumed)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  );
+  for (const c of list) {
+    stmt.run(c.id, c.email, c.domain || '', c.purpose, c.codeHash, c.createdAt, c.expiresAt, int(c.attempts), c.ip || '', bool(c.consumed));
+  }
+}
 
 /* ================= captchas ================= */
 export const mapCaptcha = (row) =>
@@ -430,12 +481,40 @@ export function saveCaptcha(c) {
     .run(c.id, c.ip || '', c.createdAt, c.expiresAt, int(c.attempts), bool(c.verified), c.verifiedAt || null, bool(c.used), c.usedAt || null);
 }
 export const deleteCaptcha = (id) => getDb().prepare('DELETE FROM captchas WHERE id=?').run(id);
+export const pruneCaptchas = (before) => getDb().prepare('DELETE FROM captchas WHERE expires_at < ?').run(before);
+
+/** 全量替换验证码挑战表（过期/已用挑战需从数据库真正删除） */
+export function replaceCaptchas(list = []) {
+  const conn = getDb();
+  conn.prepare('DELETE FROM captchas').run();
+  const stmt = conn.prepare(
+    `INSERT INTO captchas (id,ip,created_at,expires_at,attempts,verified,verified_at,used,used_at)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  );
+  for (const c of list) {
+    stmt.run(
+      c.id,
+      c.ip || '',
+      c.createdAt,
+      c.expiresAt,
+      int(c.attempts),
+      bool(c.verified),
+      c.verifiedAt || null,
+      bool(c.used),
+      c.usedAt || null,
+    );
+  }
+}
 
 /* ================= searches ================= */
-export function saveSearch(s) {
-  getDb()
-    .prepare('INSERT INTO searches (q,ts,user_id,hit) VALUES (?,?,?,?)')
-    .run(s.q, s.ts, s.userId || null, bool(s.hit));
+/** 全量替换搜索记录（内存只保留最近 2000 条，落库保持同一份数据） */
+export function replaceSearches(list = []) {
+  const conn = getDb();
+  conn.prepare('DELETE FROM searches').run();
+  const stmt = conn.prepare('INSERT INTO searches (q,ts,user_id,hit) VALUES (?,?,?,?)');
+  for (const s of list.slice(0, 2000)) {
+    stmt.run(s.q, s.ts, s.userId || null, bool(s.hit));
+  }
 }
 
 /* ================= settings ================= */

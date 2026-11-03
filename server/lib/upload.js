@@ -173,6 +173,66 @@ export const upload = {
   },
 };
 
+/**
+ * 删除本次请求已落盘的上传文件
+ * 业务校验失败（圈名重复、参数非法等）时必须调用，否则文件会永久遗留，
+ * 攻击者可借此反复上传撑爆磁盘。
+ */
+export function discardUploads(files) {
+  if (!Array.isArray(files)) return;
+  for (const file of files) {
+    try {
+      fs.unlinkSync(file.path);
+    } catch {}
+  }
+}
+
+/**
+ * 单用户上传字节配额（每小时）
+ * 防止已登录账号通过 /claims/upload 反复上传但从不提交，无限占用磁盘。
+ */
+const QUOTA_WINDOW = 3600_000;
+const QUOTA_BYTES = 200 * 1024 * 1024;
+const quota = new Map(); // userId -> { windowStart, bytes }
+
+function quotaRecord(userId) {
+  const now = Date.now();
+  let rec = quota.get(userId);
+  if (!rec || now - rec.windowStart >= QUOTA_WINDOW) {
+    rec = { windowStart: now, bytes: 0 };
+    quota.set(userId, rec);
+  }
+  return rec;
+}
+
+/** 解析上传前预估：超出配额直接拒绝，避免大文件落盘 */
+export function uploadByteQuota(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: '请先登录后再继续操作' });
+  const rec = quotaRecord(req.user.id);
+  const length = Number(req.get('content-length')) || 0;
+  if (rec.bytes + length > QUOTA_BYTES) {
+    return res.status(429).json({
+      error: '本小时上传流量已用完，请稍后再试',
+      code: 'UPLOAD_QUOTA_EXCEEDED',
+      retryAfter: Math.max(1, Math.ceil((rec.windowStart + QUOTA_WINDOW - Date.now()) / 1000)),
+    });
+  }
+  req.uploadQuota = rec;
+  if (quota.size > 5000) {
+    const now = Date.now();
+    for (const [key, value] of quota) {
+      if (now - value.windowStart >= QUOTA_WINDOW) quota.delete(key);
+    }
+  }
+  next();
+}
+
+/** 上传完成后计入配额（失败请求同样计入，防止反复试探） */
+export function chargeUploadQuota(req) {
+  if (!req.uploadQuota || !Array.isArray(req.files)) return;
+  req.uploadQuota.bytes += req.files.reduce((sum, f) => sum + (f.size || 0), 0);
+}
+
 /** 将 multer 的落盘信息转为前端可用的相对路径 */
 export function fileRecord(file) {
   const rel = path.relative(UPLOAD_DIR, file.path).split(path.sep).join('/');

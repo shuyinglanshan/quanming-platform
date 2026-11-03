@@ -26,24 +26,32 @@ export function securityHeaders(req, res, next) {
   res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
   res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
 
+  // 接口数据必须是实时的：禁止浏览器与中间代理缓存任何 API 响应
+  if (req.path.startsWith('/api')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+
   // 页面类请求下发布局级 CSP（接口请求不需要）
   if (!req.path.startsWith('/api')) {
-    res.setHeader(
-      'Content-Security-Policy',
-      [
-        "default-src 'self'",
-        // Vite 产物需要内联样式；脚本仅允许自身
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
-        "connect-src 'self'",
-        "frame-ancestors 'none'",
-        "base-uri 'self'",
-        "form-action 'self'",
-        "object-src 'none'",
-      ].join('; '),
-    );
+    const directives = [
+      "default-src 'self'",
+      // Vite 产物需要内联样式；脚本仅允许自身
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ];
+    if (process.env.NODE_ENV === 'production' || process.env.FORCE_HTTPS === '1') {
+      directives.push('upgrade-insecure-requests');
+    }
+    res.setHeader('Content-Security-Policy', directives.join('; '));
   }
   next();
 }
@@ -96,7 +104,9 @@ export function csrfGuard(req, res, next) {
     }
   })();
 
-  if (sourceHost && host && sourceHost !== host) {
+  // 只要请求带了 Origin/Referer，就必须可解析且与当前 Host 完全一致。
+  // 包括 Origin: null（沙箱 iframe）与畸形来源，统一拒绝，避免被绕过。
+  if (!sourceHost || !host || sourceHost !== host) {
     return res.status(403).json({ error: '请求来源校验失败，请刷新页面后重试', code: 'CSRF_BLOCKED' });
   }
   next();

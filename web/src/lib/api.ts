@@ -114,7 +114,16 @@ export class ApiError extends Error {
 }
 
 /** 需要加密的接口前缀（敏感写操作） */
-const ENCRYPT_PREFIXES = ['/auth/login', '/auth/register', '/auth/change-password', '/auth/send-code', '/auth/login-code', '/me/password', '/me/phone'];
+const ENCRYPT_PREFIXES = [
+  '/auth/login',
+  '/auth/register',
+  '/auth/change-password',
+  '/auth/send-code',
+  '/auth/login-code',
+  '/me/password',
+  '/me/phone',
+  '/admin',
+];
 
 function needsEncryption(path: string, method: string): boolean {
   if (!['POST', 'PUT', 'PATCH'].includes(method)) return false;
@@ -136,7 +145,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const { encryptBody } = await import('./crypto');
       const plain = JSON.parse(body);
-      const envelope = await encryptBody(plain);
+      const envelope = await encryptBody(plain, `/api${path}`, method);
       body = JSON.stringify(envelope);
       headers['X-Encrypted'] = '1';
     } catch (err) {
@@ -146,6 +155,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const res = await fetch(`/api${path}`, {
     credentials: 'include',
+    cache: 'no-store',
     ...init,
     method,
     headers,

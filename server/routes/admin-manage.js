@@ -1,10 +1,11 @@
 import express from 'express';
 import { db, save, publicUser, findUserById, maskEmail, ROLES, ROLE_LABELS } from '../lib/db.js';
 import { requirePermission } from '../lib/auth.js';
-import { paginate } from '../lib/util.js';
+import { paginate, sanitizeText } from '../lib/util.js';
 import { shapeName } from './names.js';
 import { eventLog } from '../lib/logger.js';
 import { notifyUser } from '../lib/notify.js';
+import { deleteName } from '../lib/repo.js';
 
 const router = express.Router();
 
@@ -268,10 +269,11 @@ router.patch('/names/:id', requirePermission('names'), (req, res) => {
   const { status, description, ownerId } = req.body || {};
   if (status && !['active', 'hidden'].includes(status)) return res.status(400).json({ error: '状态不合法' });
   if (status) name.status = status;
-  if (typeof description === 'string') name.description = description.slice(0, 300);
+  if (typeof description === 'string') name.description = sanitizeText(description, 300);
   if (ownerId && ownerId !== name.ownerId) {
     const target = findUserById(ownerId);
     if (!target || target.deleted) return res.status(400).json({ error: '目标用户不存在' });
+    if (target.status === 'banned') return res.status(400).json({ error: '目标用户已被封禁，无法接收圈名' });
     const prev = findUserById(name.ownerId);
     name.ownerId = ownerId;
     name.history = name.history || [];
@@ -307,6 +309,7 @@ router.delete('/names/:id', requirePermission('names'), (req, res) => {
   const name = db.names.find((n) => n.id === req.params.id);
   if (!name) return res.status(404).json({ error: '圈名不存在' });
   db.names = db.names.filter((n) => n.id !== name.id);
+  deleteName(name.id);
   save();
   eventLog(req, '删除圈名', name.name);
   res.json({ ok: true });

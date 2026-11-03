@@ -136,7 +136,7 @@ export function recordFailure(identifier, ip, password = '') {
       if (!v.lockedUntil || v.lockedUntil < now - 86400000) delete s.accounts[k];
     }
   }
-  save();
+  save('login_attempts');
 
   return {
     accountLocked: acc.lockedUntil > now,

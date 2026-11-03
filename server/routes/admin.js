@@ -89,76 +89,46 @@ router.get('/stats', (req, res) => {
 });
 
 /* ============ 归属申请审核 ============ */
-router.get('/claims', requirePermission('review'), (req, res) => {
-  const { status = 'all', q = '', page = 1, pageSize = 10 } = req.query;
-  const keyword = String(q).trim().toLowerCase();
-  let list = [...db.claims];
-  if (status !== 'all') list = list.filter((c) => c.status === status);
-  if (keyword) {
-    list = list.filter((c) => {
-      const user = findUserById(c.userId);
-      return (
-        c.name.toLowerCase().includes(keyword) ||
-        (user?.email || '').toLowerCase().includes(keyword) ||
-        (user?.nickname || '').toLowerCase().includes(keyword)
-      );
-    });
+
+/**
+ * 审核通过单个归属申请（单条审核与批量审核共用）
+ * 统一处理：材料哈希校验、冲突检查、用户统计、重复申请自动驳回、通知。
+ * 返回 { ok, status, error, code, failed, name, autoRejected }
+ */
+function approveClaimRecord(req, claim, note = '') {
+  if (!claim) return { ok: false, status: 404, error: '申请不存在' };
+  if (claim.status !== 'pending') return { ok: false, status: 400, error: '该申请已处理，请勿重复操作' };
+
+  // 防篡改：审核前核对材料哈希，若文件被替换则阻断并告警
+  const integrity = verifyImageRecords(claim.images);
+  if (!integrity.ok) {
+    eventLog(
+      req,
+      '材料完整性校验失败，已阻断审核',
+      `${claim.name} · ${JSON.stringify(integrity.failed).slice(0, 120)}`,
+      'error',
+    );
+    return {
+      ok: false,
+      status: 409,
+      code: 'INTEGRITY_FAILED',
+      error: '材料文件校验失败（可能已被替换或损坏），请驳回并要求重新上传',
+      failed: integrity.failed,
+    };
   }
-  const order = { pending: 0, approved: 1, rejected: 2 };
-  list.sort((a, b) => {
-    if (a.status !== b.status) return order[a.status] - order[b.status];
-    return new Date(b.createdAt) - new Date(a.createdAt);
-  });
-
-  const result = paginate(list, page, pageSize);
-  res.json({
-    ...result,
-    items: result.items.map((c) => shapeClaim(c, { withUser: true })),
-    counts: {
-      all: db.claims.length,
-      pending: db.claims.filter((c) => c.status === 'pending').length,
-      approved: db.claims.filter((c) => c.status === 'approved').length,
-      rejected: db.claims.filter((c) => c.status === 'rejected').length,
-    },
-  });
-});
-
-router.get('/claims/:id', requirePermission('review'), (req, res) => {
-  const claim = db.claims.find((c) => c.id === req.params.id);
-  if (!claim) return res.status(404).json({ error: '申请不存在' });
-  res.json({ claim: shapeClaim(claim, { withUser: true }) });
-});
-
-router.post('/claims/:id/approve', requirePermission('review'), (req, res) => {
-  const claim = db.claims.find((c) => c.id === req.params.id);
-  if (claim && claim.status === 'pending') {
-    // 防篡改：审核前核对材料哈希，若文件被替换则阻断并告警
-    const integrity = verifyImageRecords(claim.images);
-    if (!integrity.ok) {
-      eventLog(
-        req,
-        '材料完整性校验失败，已阻断审核',
-        `${claim.name} · ${JSON.stringify(integrity.failed).slice(0, 120)}`,
-        'error',
-      );
-      return res.status(409).json({
-        error: '材料文件校验失败（可能已被替换或损坏），请驳回并要求重新上传',
-        code: 'INTEGRITY_FAILED',
-        failed: integrity.failed,
-      });
-    }
-  }
-  if (!claim) return res.status(404).json({ error: '申请不存在' });
-  if (claim.status !== 'pending') return res.status(400).json({ error: '该申请已处理，请勿重复操作' });
 
   const owner = findUserById(claim.userId);
-  if (!owner) return res.status(404).json({ error: '申请用户不存在' });
+  if (!owner || owner.deleted) return { ok: false, status: 404, error: '申请用户不存在' };
+  // 封禁账号不允许获得圈名归属，否则封禁形同虚设
+  if (owner.status === 'banned') {
+    return { ok: false, status: 409, code: 'OWNER_BANNED', error: '申请用户已被封禁，无法通过审核，请驳回该申请' };
+  }
 
-  const conflict = db.names.find((n) => n.name.toLowerCase() === claim.name.toLowerCase() && n.status !== 'hidden');
-  if (conflict) return res.status(409).json({ error: '该圈名已被绑定，请先处理已有绑定' });
+  // 数据库 names(name) 有唯一索引，hidden 记录同样占用名称，必须一并检查
+  const conflict = db.names.find((n) => n.name.toLowerCase() === claim.name.toLowerCase());
+  if (conflict) return { ok: false, status: 409, error: '该圈名已被绑定，请先处理已有绑定' };
 
   const now = new Date().toISOString();
-  const note = String(req.body?.note || '').slice(0, 300);
   const nameRecord = {
     id: uid('n_'),
     name: claim.name,
@@ -207,7 +177,6 @@ router.post('/claims/:id/approve', requirePermission('review'), (req, res) => {
       meta: { claimId: other.id },
     });
   }
-  save();
 
   notifyUser(owner.id, {
     category: 'review',
@@ -218,8 +187,65 @@ router.post('/claims/:id/approve', requirePermission('review'), (req, res) => {
     meta: { claimId: claim.id, nameId: nameRecord.id },
   });
 
-  eventLog(req, '审核通过圈名归属', `${claim.name} · ${owner.email}`);
-  res.json({ ok: true, claim: shapeClaim(claim, { withUser: true }), name: shapeName(nameRecord), autoRejected: others.length });
+  return { ok: true, claim, name: nameRecord, autoRejected: others.length };
+}
+
+router.get('/claims', requirePermission('review'), (req, res) => {
+  const { status = 'all', q = '', page = 1, pageSize = 10 } = req.query;
+  const keyword = String(q).trim().toLowerCase();
+  let list = [...db.claims];
+  if (status !== 'all') list = list.filter((c) => c.status === status);
+  if (keyword) {
+    list = list.filter((c) => {
+      const user = findUserById(c.userId);
+      return (
+        c.name.toLowerCase().includes(keyword) ||
+        (user?.email || '').toLowerCase().includes(keyword) ||
+        (user?.nickname || '').toLowerCase().includes(keyword)
+      );
+    });
+  }
+  const order = { pending: 0, approved: 1, rejected: 2 };
+  list.sort((a, b) => {
+    if (a.status !== b.status) return order[a.status] - order[b.status];
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  const result = paginate(list, page, pageSize);
+  res.json({
+    ...result,
+    items: result.items.map((c) => shapeClaim(c, { withUser: true })),
+    counts: {
+      all: db.claims.length,
+      pending: db.claims.filter((c) => c.status === 'pending').length,
+      approved: db.claims.filter((c) => c.status === 'approved').length,
+      rejected: db.claims.filter((c) => c.status === 'rejected').length,
+    },
+  });
+});
+
+router.get('/claims/:id', requirePermission('review'), (req, res) => {
+  const claim = db.claims.find((c) => c.id === req.params.id);
+  if (!claim) return res.status(404).json({ error: '申请不存在' });
+  res.json({ claim: shapeClaim(claim, { withUser: true }) });
+});
+
+router.post('/claims/:id/approve', requirePermission('review'), (req, res) => {
+  const claim = db.claims.find((c) => c.id === req.params.id);
+  const note = String(req.body?.note || '').slice(0, 300);
+  const result = approveClaimRecord(req, claim, note);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error, code: result.code, failed: result.failed });
+  }
+
+  save();
+  eventLog(req, '审核通过圈名归属', `${claim.name} · ${findUserById(claim.userId)?.email || ''}`);
+  res.json({
+    ok: true,
+    claim: shapeClaim(claim, { withUser: true }),
+    name: shapeName(result.name),
+    autoRejected: result.autoRejected,
+  });
 });
 
 router.post('/claims/:id/reject', requirePermission('review'), (req, res) => {
@@ -269,6 +295,7 @@ router.post('/claims/batch', requirePermission('review'), (req, res) => {
   }
   let done = 0;
   let skipped = 0;
+  let integrityBlocked = 0;
   const now = new Date().toISOString();
   for (const id of ids) {
     const claim = db.claims.find((c) => c.id === id);
@@ -283,6 +310,11 @@ router.post('/claims/batch', requirePermission('review'), (req, res) => {
       claim.reviewedBy = req.user.id;
       claim.reviewerName = req.user.nickname;
       claim.updatedAt = now;
+      const owner = findUserById(claim.userId);
+      if (owner) {
+        owner.stats = owner.stats || { claims: 0, approved: 0, rejected: 0 };
+        owner.stats.rejected = (owner.stats.rejected || 0) + 1;
+      }
       notifyUser(claim.userId, {
         category: 'review',
         level: 'danger',
@@ -292,43 +324,23 @@ router.post('/claims/batch', requirePermission('review'), (req, res) => {
       });
       done += 1;
     } else {
-      const conflict = db.names.find((n) => n.name.toLowerCase() === claim.name.toLowerCase() && n.status !== 'hidden');
-      if (conflict) {
+      // 与单条审核共用同一套校验：材料哈希、冲突、统计、重复申请自动驳回
+      const result = approveClaimRecord(req, claim);
+      if (!result.ok) {
         skipped += 1;
+        if (result.code === 'INTEGRITY_FAILED') integrityBlocked += 1;
         continue;
       }
-      db.names.unshift({
-        id: uid('n_'),
-        name: claim.name,
-        description: claim.description || '',
-        tags: [],
-        ownerId: claim.userId,
-        status: 'active',
-        createdAt: now,
-        approvedAt: now,
-        views: 0,
-        claimId: claim.id,
-        reviewerId: req.user.id,
-      });
-      claim.status = 'approved';
-      claim.reviewedAt = now;
-      claim.reviewedBy = req.user.id;
-      claim.reviewerName = req.user.nickname;
-      claim.updatedAt = now;
-      claim.rejectReason = '';
-      notifyUser(claim.userId, {
-        category: 'review',
-        level: 'success',
-        title: `圈名「${claim.name}」归属审核已通过`,
-        content: '你的圈名归属申请已通过审核，圈名已绑定到你的账号。',
-        link: '/me?tab=names',
-      });
       done += 1;
     }
   }
   save();
-  eventLog(req, action === 'approve' ? '批量通过圈名归属' : '批量驳回圈名归属', `成功 ${done} 条 / 跳过 ${skipped} 条`);
-  res.json({ ok: true, done, skipped });
+  eventLog(
+    req,
+    action === 'approve' ? '批量通过圈名归属' : '批量驳回圈名归属',
+    `成功 ${done} 条 / 跳过 ${skipped} 条${integrityBlocked ? ` / 材料校验失败 ${integrityBlocked} 条` : ''}`,
+  );
+  res.json({ ok: true, done, skipped, integrityBlocked });
 });
 
 /* ============ 申诉审核 ============ */
@@ -394,7 +406,10 @@ router.post('/appeals/:id/approve', requirePermission('appeal'), (req, res) => {
 
   const appellant = findUserById(appeal.userId);
   const previousOwner = findUserById(name.ownerId);
-  if (!appellant) return res.status(404).json({ error: '申诉用户不存在' });
+  if (!appellant || appellant.deleted) return res.status(404).json({ error: '申诉用户不存在' });
+  if (appellant.status === 'banned') {
+    return res.status(409).json({ error: '申诉用户已被封禁，无法转移圈名归属，请驳回该申诉' });
+  }
 
   const now = new Date().toISOString();
   const note = String(req.body?.note || '').slice(0, 300);

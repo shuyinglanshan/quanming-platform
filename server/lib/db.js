@@ -87,6 +87,7 @@ export const db = {
     tempBlocks: [],
     events: [],
     registerAttempts: {},
+    loginAttempts: { accounts: {}, ips: {}, hashes: {} },
   },
   settings: structuredClone(DEFAULT_SETTINGS),
   meta: {},
@@ -96,25 +97,43 @@ export const db = {
 function loadAll() {
   const conn = getDb();
 
+  // 启动时清理过期的会话/验证码/验证挑战，避免重启后复活过期数据
+  try {
+    const now = Date.now();
+    repo.pruneSessions(now);
+    repo.pruneCodes(now - 60_000);
+    repo.pruneCaptchas(now);
+    repo.pruneNotifications(5000);
+  } catch (err) {
+    console.error('[db] 启动清理失败:', err.message);
+  }
+
   db.users = conn.prepare('SELECT * FROM users').all().map(repo.mapUser);
   db.sessions = conn.prepare('SELECT * FROM sessions').all().map(repo.mapSession);
   db.names = conn.prepare('SELECT * FROM names').all().map(repo.mapName);
   db.claims = conn.prepare('SELECT * FROM claims').all().map(repo.mapClaim);
   db.appeals = conn.prepare('SELECT * FROM appeals').all().map(repo.mapAppeal);
-  db.notifications = conn.prepare('SELECT * FROM notifications').all().map(repo.mapNotification);
-  db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC').all().map(repo.mapLog);
+  db.notifications = conn
+    .prepare('SELECT * FROM notifications ORDER BY created_at DESC LIMIT 5000')
+    .all()
+    .map(repo.mapNotification);
+  db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC LIMIT 2000').all().map(repo.mapLog);
   db.codes = conn.prepare('SELECT * FROM email_codes').all().map(repo.mapCode);
   db.captchas = conn.prepare('SELECT * FROM captchas').all().map(repo.mapCaptcha);
+  db.searches = conn
+    .prepare('SELECT * FROM searches ORDER BY ts DESC LIMIT 2000')
+    .all()
+    .map((r) => ({ q: r.q, ts: r.ts, userId: r.user_id, hit: Boolean(r.hit) }));
 
   db.security.blockedIps = conn
     .prepare('SELECT * FROM blocked_ips')
     .all()
-    .map((r) => ({ ip: r.ip, reason: r.reason, by: r.by_user, createdAt: r.created_at }));
+    .map((r) => ({ ip: r.ip, reason: r.reason, by: r.by_who, createdAt: r.created_at }));
 
   db.security.tempBlocks = conn
     .prepare('SELECT * FROM temp_blocks')
     .all()
-    .map((r) => ({ ip: r.ip, until: r.until_ms, strikes: r.strikes, reason: r.reason, blockedAt: r.blocked_at }));
+    .map((r) => ({ ip: r.ip, until: r.until_ts, strikes: r.strikes, reason: r.reason, blockedAt: r.blocked_at }));
 
   db.security.events = conn
     .prepare('SELECT * FROM security_events ORDER BY created_at DESC LIMIT 500')
@@ -137,10 +156,21 @@ function loadAll() {
   const lf = conn.prepare('SELECT * FROM login_attempts').all();
   const loginAttempts = { accounts: {}, ips: {}, hashes: {} };
   for (const r of lf) {
-    const rec = { count: r.count, level: r.level, lockedUntil: r.locked_until, lastAt: r.last_at, ...repo.json.parse(r.extra, {}) };
-    if (r.scope === 'account') loginAttempts.accounts[r.key] = rec;
-    else if (r.scope === 'ip') loginAttempts.ips[r.key] = rec;
-    else if (r.scope === 'hash') loginAttempts.hashes[r.key] = rec;
+    const kind = r.kind || 'account';
+    const payload = repo.json.parse(r.payload, {});
+    const rec = {
+      count: r.count || 0,
+      level: r.level || 0,
+      lockedUntil: r.locked_until || 0,
+      lastAt: r.last_at || 0,
+      ...payload,
+    };
+    const prefix = kind === 'account' ? 'acct:' : kind === 'ip' ? 'ip:' : 'hash:';
+    const rawKey = String(r.key || '');
+    const key = rawKey.startsWith(prefix) ? rawKey.slice(prefix.length) : rawKey;
+    if (kind === 'account') loginAttempts.accounts[key] = rec;
+    else if (kind === 'ip') loginAttempts.ips[key] = rec;
+    else if (kind === 'hash') loginAttempts.hashes[key] = rec;
   }
   db.security.loginAttempts = loginAttempts;
 
@@ -149,6 +179,23 @@ function loadAll() {
   db.settings = deepMerge(structuredClone(DEFAULT_SETTINGS), saved || {});
 
   db.meta = { version: 4, engine: 'sqlite', loadedAt: new Date().toISOString() };
+
+  // 历史数据兜底：旧版本允许客户端提交任意图片地址，启动时统一清洗，
+  // 只保留本站 /uploads 下的真实图片，避免 javascript:/外链进入后台渲染。
+  const SAFE_IMAGE_URL =
+    /^\/uploads\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp|gif|heic|heif|avif)$/i;
+  for (const item of [...db.claims, ...db.appeals]) {
+    if (!Array.isArray(item.images)) {
+      item.images = [];
+      continue;
+    }
+    const safe = item.images.filter((img) => img && SAFE_IMAGE_URL.test(String(img.url || '')));
+    if (safe.length !== item.images.length) {
+      console.warn(`[db] 已清理 ${item.images.length - safe.length} 条非法历史图片地址（${item.id}）`);
+      item.images = safe;
+    }
+  }
+
   return db;
 }
 
@@ -158,62 +205,77 @@ loadAll();
 
 /** 全量落库（用于初始化/迁移等场景） */
 export function flush() {
-  const conn = getDb();
-  transaction(() => {
-    for (const u of db.users) repo.saveUser(u);
-    for (const n of db.names) repo.saveName(n);
-    for (const c of db.claims) repo.saveClaim(c);
-    for (const a of db.appeals) repo.saveAppeal(a);
-    for (const n of db.notifications) repo.saveNotification(n);
-    for (const s of db.sessions) repo.saveSession(s);
-    for (const c of db.codes) repo.saveCode(c);
-    for (const c of db.captchas) repo.saveCaptcha(c);
-    for (const l of db.logs) repo.saveLog(l);
-  });
+  persistTables(new Set(PERSIST_TABLES));
 }
 
 /**
- * 通用保存（保持向后兼容）
- * 业务代码里大量 `save()` 调用无法逐一区分改了什么，
- * 这里做「增量同步」：对比内存与库中记录，只写有变化的表。
- * 为控制开销，采用轻量版本号机制。
+ * 通用保存（同步写穿）
+ * 所有业务写入立即落库，不做延迟/批量缓存，保证任意时刻读取到的都是最新数据。
+ * 日志属于高频写入，由 logger 单条直接落库，这里默认不重写日志表。
  */
-let saveTimer = null;
 let dirty = new Set();
+const debounceTimers = new Map();
+
+/**
+ * 所有需要持久化的表。
+ * save() 不带表名时无法判断业务改了哪张表，必须把所有表都标记为待写入，
+ * 否则上一次 save('logs') 造成的 dirty 会吞掉随后 save() 产生的用户/业务变更。
+ */
+const PERSIST_TABLES = [
+  'users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas',
+  'logs', 'searches', 'settings', 'blocked_ips', 'temp_blocks', 'security_events',
+  'register_attempts', 'login_attempts',
+];
 
 export function markDirty(table) {
   dirty.add(table);
 }
 
 export function save(table) {
+  if (table && debounceTimers.has(table)) {
+    clearTimeout(debounceTimers.get(table));
+    debounceTimers.delete(table);
+  }
   if (table) dirty.add(table);
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    const tables = dirty.size
-      ? new Set(dirty)
-      : new Set(['users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas', 'logs', 'settings']);
-    dirty = new Set();
-    try {
-      persistTables(tables);
-    } catch (err) {
-      console.error('[db] 写入数据库失败:', err.message);
-    }
-  }, 60);
+  else for (const t of PERSIST_TABLES) if (t !== 'logs') dirty.add(t);
+  if (!dirty.size) return;
+  const tables = new Set(dirty);
+  dirty = new Set();
+  try {
+    persistTables(tables);
+  } catch (err) {
+    for (const t of tables) dirty.add(t);
+    console.error('[db] 写入数据库失败:', err.message);
+  }
+}
+
+/**
+ * 合并高频写入（浏览量、搜索词），避免每个请求都重写整张表。
+ * 只用于可容忍少量丢失的计数类数据；关键业务仍使用同步 save()。
+ */
+export function saveDebounced(table, delayMs = 3000) {
+  if (debounceTimers.has(table)) return;
+  const timer = setTimeout(() => {
+    debounceTimers.delete(table);
+    save(table);
+  }, delayMs);
+  timer.unref?.();
+  debounceTimers.set(table, timer);
 }
 
 /** 立即持久化指定表（关键操作使用，确保不丢数据） */
 export function persistTables(tables) {
   transaction(() => {
     if (tables.has('users')) for (const u of db.users) repo.saveUser(u);
-    if (tables.has('sessions')) for (const s of db.sessions) repo.saveSession(s);
+    if (tables.has('sessions')) repo.replaceSessions(db.sessions);
     if (tables.has('names')) for (const n of db.names) repo.saveName(n);
     if (tables.has('claims')) for (const c of db.claims) repo.saveClaim(c);
     if (tables.has('appeals')) for (const a of db.appeals) repo.saveAppeal(a);
     if (tables.has('notifications')) for (const n of db.notifications) repo.saveNotification(n);
-    if (tables.has('codes')) for (const c of db.codes) repo.saveCode(c);
-    if (tables.has('captchas')) for (const c of db.captchas) repo.saveCaptcha(c);
+    if (tables.has('codes')) repo.replaceCodes(db.codes);
+    if (tables.has('captchas')) repo.replaceCaptchas(db.captchas);
     if (tables.has('logs')) for (const l of db.logs) repo.saveLog(l);
+    if (tables.has('searches')) repo.replaceSearches(db.searches);
     if (tables.has('settings')) for (const [k, v] of Object.entries(db.settings)) repo.saveSettings(k, v);
     // 安全相关表
     if (tables.has('blocked_ips')) repo.saveBlockedIps(db.security?.blockedIps || []);
@@ -235,7 +297,15 @@ export function persistTables(tables) {
         repo.saveLoginAttempt({ key: 'ip:' + k, kind: 'ip', ...v });
       }
       for (const [k, v] of Object.entries(la.hashes || {})) {
-        repo.saveLoginAttempt({ key: 'hash:' + k, kind: 'hash', count: v.count || 0, payload: { accounts: v.accounts || [] }, lastAt: v.lastAt });
+        repo.saveLoginAttempt({
+          key: 'hash:' + k,
+          kind: 'hash',
+          count: v.count || 0,
+          level: v.level || 0,
+          lockedUntil: v.lockedUntil || 0,
+          payload: { accounts: v.accounts || [] },
+          lastAt: v.lastAt || 0,
+        });
       }
     }
   });
@@ -243,13 +313,9 @@ export function persistTables(tables) {
 
 /** 立即落盘（进程退出/关键写操作后调用） */
 export function persistNow() {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  const tables = dirty.size
-    ? new Set([...dirty, 'users', 'sessions'])
-    : new Set(['users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas', 'logs', 'settings', 'blocked_ips', 'temp_blocks']);
+  const tables = dirty.size ? new Set(dirty) : new Set(PERSIST_TABLES);
+  tables.add('users');
+  tables.add('sessions');
   dirty = new Set();
   try {
     persistTables(tables);

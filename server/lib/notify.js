@@ -1,4 +1,5 @@
 import { db, save, uid } from './db.js';
+import { pruneNotifications } from './repo.js';
 
 /**
  * 通知中心
@@ -31,7 +32,11 @@ export function createNotification({
     createdAt: new Date().toISOString(),
   };
   db.notifications.unshift(notice);
-  if (db.notifications.length > 5000) db.notifications.length = 5000;
+  if (db.notifications.length > 5000) {
+    db.notifications.length = 5000;
+    // 同步裁剪数据库，避免历史通知无限增长
+    pruneNotifications(5000);
+  }
   save();
   return notice;
 }
@@ -65,7 +70,10 @@ export function broadcastNotification(payload, { excludeUserIds = [] } = {}) {
     created.push(notice);
   }
   db.notifications.unshift(...created);
-  if (db.notifications.length > 5000) db.notifications.length = 5000;
+  if (db.notifications.length > 5000) {
+    db.notifications.length = 5000;
+    pruneNotifications(5000);
+  }
   save();
   return { batchId, count: created.length };
 }
@@ -91,9 +99,11 @@ export function listNotifications(userId, { category = 'all', unreadOnly = false
 export function markRead(userId, ids = null) {
   const now = new Date().toISOString();
   let count = 0;
+  // 用 Set 并限制单次数量，避免超大 ids 数组造成 O(ids × 通知数) 的 CPU 放大
+  const idSet = Array.isArray(ids) ? new Set(ids.slice(0, 1000).map(String)) : null;
   for (const n of db.notifications) {
     if (n.userId !== userId || n.readAt) continue;
-    if (ids && !ids.includes(n.id)) continue;
+    if (idSet && !idSet.has(n.id)) continue;
     n.readAt = now;
     count += 1;
   }

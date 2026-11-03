@@ -1,5 +1,5 @@
 import express from 'express';
-import { db, save } from '../lib/db.js';
+import { db, saveDebounced } from '../lib/db.js';
 import { paginate } from '../lib/util.js';
 
 const router = express.Router();
@@ -51,7 +51,7 @@ router.post('/search-log', (req, res) => {
   if (q) {
     db.searches.unshift({ q: q.slice(0, 60), ts: Date.now(), userId: req.user?.id || null, hit: Boolean(req.body?.hit) });
     if (db.searches.length > 2000) db.searches.length = 2000;
-    save();
+    saveDebounced('searches');
   }
   res.json({ ok: true });
 });
@@ -114,7 +114,8 @@ router.get('/:id', (req, res) => {
   const name = db.names.find((n) => n.id === req.params.id || n.name === req.params.id);
   if (!name || name.status === 'hidden') return res.status(404).json({ error: '该圈名不存在或已下架' });
   name.views = (name.views || 0) + 1;
-  save();
+  // 浏览计数属于高频可容忍延迟写入，合并 3 秒落库，避免每个请求重写整张 names 表
+  saveDebounced('names');
   res.json({ name: shapeName(name) });
 });
 

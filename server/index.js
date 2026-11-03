@@ -37,6 +37,8 @@ const app = express();
 // 部署在 Nginx 等反代之后时，请设置 TRUST_PROXY=1 与 TRUSTED_PROXIES=<反代IP/CIDR>
 app.set('trust proxy', /^(1|true|yes)$/i.test(String(process.env.TRUST_PROXY || '')));
 app.disable('x-powered-by');
+// 新建的数据库/密钥/上传文件默认只有属主可读写，避免同机其他账号读取
+process.umask(0o077);
 
 app.use(requestId);
 app.use(securityHeaders);
@@ -44,12 +46,13 @@ app.use(express.json({ limit: '2mb' }));
 // extended: false 可避免 qs 的嵌套解析带来的原型污染面
 app.use(express.urlencoded({ extended: false, limit: '2mb' }));
 app.use(cookieParser());
-app.use(blockPrototypePollution);
 app.use(csrfGuard);
 // 防中间人：阻断跨站敏感请求，可选强制 HTTPS
 app.use(mitmGuard);
 // 应用层加密：还原客户端加密的请求体（明文请求自动放行）
 app.use(decryptRequest);
+// 放在解密之后，确保加密请求解密出的请求体同样经过原型污染清洗
+app.use(blockPrototypePollution);
 // 日志先于风控挂载，保证被限流的请求同样被记录，便于事后排查误伤
 app.use(requestLogger);
 app.use(rateGuard);
@@ -277,7 +280,8 @@ function ensureFirstAdmin() {
 }
 
 function bootstrap() {
-  // 应用层加密密钥（RSA-2048），首次启动自动生成
+  // 应用层加密密钥（RSA-3072 + AES-256-GCM），首次启动自动生成；
+  // 检测到旧密钥强度不足或设置 CRYPTO_ROTATE_KEYS=1 时自动轮换，旧密钥立即失效。
   ensureKeyPair();
 
   const pepper = pepperStatus();

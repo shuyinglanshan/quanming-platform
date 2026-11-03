@@ -3,6 +3,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { ROOT } from './paths.js';
 
+// 数据库文件仅允许属主访问（含 WAL/SHM），避免同机其他账号读取用户数据
+process.umask(0o077);
+
 /**
  * SQLite 数据库连接与初始化
  *
@@ -27,6 +30,9 @@ export function getDb() {
 
   const isNew = !fs.existsSync(DB_PATH);
   const db = new DatabaseSync(DB_PATH);
+  try {
+    fs.chmodSync(DB_PATH, 0o600);
+  } catch {}
 
   // 基础 PRAGMA（schema.sql 中也有，这里确保连接级生效）
   db.exec('PRAGMA journal_mode = WAL');
@@ -41,6 +47,10 @@ export function getDb() {
   } else {
     console.error('[db] 未找到 db/schema.sql，数据库可能不完整');
   }
+
+  // 轻量迁移：旧库补列（ALTER 在 SQLite 上仅新增列时是安全的）
+  const columns = db.prepare('PRAGMA table_info(access_logs)').all().map((c) => c.name);
+  if (!columns.includes('v')) db.exec('ALTER TABLE access_logs ADD COLUMN v INTEGER DEFAULT 1');
 
   instance = db;
   if (isNew) {

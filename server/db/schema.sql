@@ -210,7 +210,8 @@ CREATE TABLE IF NOT EXISTS access_logs (
   os          TEXT,
   device      TEXT,
   prev_hash   TEXT,
-  chain_hash  TEXT
+  chain_hash  TEXT,
+  v           INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts     ON access_logs(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_status ON access_logs(status);

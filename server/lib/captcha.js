@@ -24,7 +24,7 @@ function cleanup() {
   const kept = list.filter((c) => c.expiresAt > now && !c.used);
   if (kept.length !== list.length) {
     db.captchas = kept;
-    save();
+    save('captchas');
   }
 }
 
@@ -57,7 +57,7 @@ export function createChallenge(ip = '') {
   db.captchas.push(challenge);
   // 兜底上限，避免无 IP 场景无限增长
   if (db.captchas.length > 2000) db.captchas = db.captchas.slice(-2000);
-  save();
+  save('captchas');
 
   // 滑块语义为「拖到最右端」，不再下发缺口位置
   return { id, expiresIn: TTL / 1000 };
@@ -80,7 +80,7 @@ export function verifyChallenge(id) {
 
   challenge.verified = true;
   challenge.verifiedAt = new Date().toISOString();
-  save();
+  save('captchas');
   return { ok: true };
 }
 
@@ -121,7 +121,7 @@ export function consumeChallenge(id) {
 
   challenge.used = true;
   challenge.usedAt = new Date().toISOString();
-  save();
+  save('captchas');
   return { ok: true };
 }
 

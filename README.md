@@ -99,6 +99,18 @@ SMTP_HOST=smtp.qq.com
 SMTP_PORT=465
 SMTP_USER=你的QQ邮箱@qq.com
 SMTP_PASS=你的SMTP授权码           # 是授权码，不是登录密码
+
+# 应用层加密（可选）
+# CRYPTO_ROTATE_KEYS=1            # 需轮换密钥时临时开启一次，启动成功后删除该行
+REQUIRE_ENCRYPTED=1               # 生产默认开启；敏感接口拒绝明文
+# ALLOW_PLAINTEXT_SENSITIVE=1     # 确有明文脚本调用需求时才放开（不推荐）
+
+# 反代与协议（生产部署在 Nginx 后必须配置）
+TRUST_PROXY=1
+TRUST_PROXY_HOPS=1
+TRUSTED_PROXIES=127.0.0.1/32
+FORCE_HTTPS=0                     # HTTPS 可用后改为 1，强制敏感操作走 HTTPS
+ENABLE_HSTS=1                     # 可选，默认生产已发送 HSTS
 ```
 
 > **必须完成邮箱配置**，否则注册与验证码登录无法使用。
@@ -137,8 +149,8 @@ npm start          # 启动服务（http://localhost:3000）
 - 用户名格式为 `qm_admin_` + 6 位随机十六进制；密码为 16 位，包含大小写字母、数字与符号
 - 密码只以 bcrypt 哈希入库，明文**仅在首次启动时打印一次**
 - 若在 `.env` 中显式填写 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，则使用指定值
-- 忘记密码时可删除 `server/data/db.json` 重启，会重新生成（**会清空所有数据**）
-  ；或直接修改该文件中的 `passwordHash`
+- 忘记密码时可删除 `server/data/quanming.db`（连同 `-wal`/`-shm`）重启，会重新生成
+  （**会清空所有数据**）；或直接修改数据库中的 `password_hash` 字段
 
 **不会写入任何示例圈名、示例用户或示例审核记录**，所有数据均来自真实使用。
 
@@ -312,7 +324,8 @@ quanming/
   - 统一安全响应头：CSP、X-Frame-Options、nosniff、Referrer-Policy、Permissions-Policy
   - CSRF 防护：写操作校验 Origin/Referer 同源
   - 原型污染防护：`urlencoded({extended:false})` + 递归剔除 `__proto__` 等危险键
-  - 上传安全：禁止 SVG，校验文件头 magic bytes 防伪装，服务端重命名，上传目录强制 CSP `sandbox`
+  - 上传安全：禁止 SVG，校验文件头 magic bytes 防伪装，服务端重命名，上传目录强制 CSP `sandbox`；
+    业务校验失败立即删除已落盘文件，并按用户 200MB/小时配额限制上传，防止磁盘耗尽
   - XSS 防护：昵称、圈名、简介、申诉理由统一 `sanitizeText` 清洗（移除 script/style 等危险元素与全部标签）
   - 验证码接口单 IP 每小时签发上限，防内存耗尽
   - 路径穿越防护、错误信息不泄漏堆栈、敏感字段（passwordHash）永不出现在接口响应
@@ -332,8 +345,13 @@ quanming/
   其他路径（尤其带扩展名或隐藏文件，如 `/.env`、`/x.zip`、`/.git/config`）一律返回真正的 404。
   避免"任意路径都 200"导致扫描器/安全设备无法识别真实攻击面，也避免掩盖静态目录误挂载。
 - **日志完整性哈希链**：每条日志携带 `prev`（上一条的哈希）与 `chain`（本条哈希），形成防篡改链。
-  管理员可通过 `GET /api/admin/logs/integrity` 校验；若有人删改中间日志，校验会定位到断裂点。
+  新版日志（`v=2`）将 `detail`、`email`、`ua` 一并纳入哈希，管理员可通过
+  `GET /api/admin/logs/integrity` 校验，重启后仍可发现字段级篡改并定位断裂点。
   系统**不提供删除访问日志的接口**；清理风控事件这类高风险操作会先写入审计日志再执行。
+- **高频写入收敛**：圈名浏览量、搜索热词属于可容忍少量延迟的计数数据，改为 3 秒合并落库，
+  避免单个请求重写整张表造成写放大 DoS；关键业务数据仍保持同步写穿。
+- **封禁一致性**：被封禁账号会被拒绝获得圈名归属（审核通过返回 409 `OWNER_BANNED`），
+  管理员手动转移归属同样拒绝封禁账号，避免"封禁后仍可通过审核/转移持有圈名"。
 - **前端 UI 体系（shadcn/ui + 液态玻璃）**：
   - **液态玻璃 `liquid`**：`backdrop-filter: blur(26px) saturate(180%) brightness(1.08)` + 双层渐变背景 + 多层内阴影，
     配合 `liquid-sheen`（顶部高光带）与 `liquid-flow`（悬停流光扫过）营造玻璃质感
@@ -343,11 +361,15 @@ quanming/
   - **过渡动画**：`cubic-bezier(0.22,1,0.36,1)` 缓动；悬停上浮 1px、卡片浮起、Tab 内容淡入上滑、
     Dialog 缩放+上浮进出场、路由切换淡出淡入、`Reveal` 组件基于 IntersectionObserver 的滚入渐显
   - **无障碍**：全面支持 `prefers-reduced-motion`，关闭动画偏好时自动禁用所有过渡
-- **应用层三重加密（Base64 + RSA-OAEP + AES-256-GCM）**：
-  浏览器拉取 RSA-2048 公钥 → 每次请求生成随机 32 字节 AES 密钥与 12 字节 IV →
-  AES-GCM 加密请求体 → RSA-OAEP(SHA-256) 加密 AES 密钥 → 整体 base64 传输。
-  `/auth/*`、`/me/*` 等敏感接口自动加密，抓包只能看到 `{"enc":{key,iv,data,tag}}`，
-  **密码、手机号、用户名在网络层均不可见**。GCM 认证标签保证密文被篡改时直接拒绝。
+- **应用层加密协议 v2（RSA-3072 + AES-256-GCM）**：
+  浏览器拉取服务端公钥（带 `kid` 指纹与 `v:2`）→ 每次请求生成随机 32 字节 AES 密钥与 12 字节 IV →
+  AES-256-GCM 加密请求体（AAD 绑定 `qm:v2|METHOD|PATH`）→ RSA-OAEP(SHA-256) 封装 AES 密钥 →
+  整体以 `{"enc":{v,kid,key,iv,data,tag}}` 传输。服务端校验协议版本、`kid`、IV/Tag 长度、RSA 密钥长度，
+  并校验明文内的 `ts`（5 分钟有效期）、一次性 `nonce`（防原样重放）与 `path`/`method`（防跨接口重放）。
+  `/auth/*`、`/me/*`、`/admin/*` 等敏感写接口自动加密，抓包只能看到密文；
+  生产环境对登录、注册、改密、换绑手机等接口**强制加密**，明文请求返回 400 `ENCRYPTION_REQUIRED`。
+  密钥首次启动自动生成 RSA-3072；检测到旧密钥不足 3072 位、或设置 `CRYPTO_ROTATE_KEYS=1` 时，
+  启动会自动删除旧 PEM 并生成新密钥，旧 `kid` 立即失效（前端收到 `DECRYPT_FAILED` 后自动刷新公钥缓存）。
 - **密码存储**（重要设计说明）：需求中的「SHA-256 哈希存储」若**单独使用是安全倒退**——
   SHA-256 太快、无盐值，GPU 每秒可算数十亿次，且可被彩虹表直接命中。
   本实现采用业界标准：客户端 `SHA-256(password)` → 服务端 `HMAC-SHA256(pepper)` 收敛 →
@@ -369,10 +391,24 @@ quanming/
 ## ✦ 生产部署
 
 ```bash
-sudo cp -r . /opt/quanming
+# 1) 同步代码（务必排除运行数据，避免覆盖线上用户数据）
+rsync -az --exclude node_modules --exclude data --exclude uploads --exclude .env \
+  ./server/ user@host:/opt/quanming/server/
+rsync -az --delete ./web/dist/ user@host:/opt/quanming/web/dist/
+
+# 2) 安装生产依赖（如服务器访问 npm 源不稳定，可在本地打包 node_modules 传输）
+ssh user@host 'cd /opt/quanming/server && npm ci --omit=dev'
+
+# 3) 安装并启动 systemd 服务
 sudo cp scripts/quanming.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now quanming
 ```
+
+> 首次部署或需要作废旧密钥时：删除 `server/data/keys/rsa_private.pem`、`rsa_public.pem`
+> 后重启（或临时设置 `CRYPTO_ROTATE_KEYS=1`）。启动日志出现
+> `[crypto] 已生成新的 RSA-3072 密钥对` 即表示旧密钥已作废。
+> 可通过 `GET /api/crypto/pubkey` 查看新的 `kid` 与 `bits`（应为 3072）。
+> **不要删除** `server/data/keys/pepper.key`，否则历史密码哈希将无法校验。
 
 Nginx 反代示例（注意转发真实 IP，风控依赖 `X-Forwarded-For`）：
 
@@ -393,7 +429,57 @@ location / {
 > TRUSTED_PROXIES=127.0.0.1/32
 > ```
 
-> 备份只需备份 `server/data/db.json` 与 `server/uploads/` 两个路径。
+> 备份只需备份 `server/data/quanming.db`（连同 `-wal`/`-shm`，建议停服或用 SQLite 在线备份）
+> 与 `server/uploads/`。数据库与密钥文件权限应为 `600`，目录为 `700`。
+
+---
+
+## ✦ 安全审计与渗透测试
+
+最近一次完整审计（2026-11）覆盖认证、越权、注入、上传、CSRF、加密协议、信息泄露与防爆破，
+共 **84 项检查全部通过**（本地生产模式 62 项 + 线上 22 项，含加密链路与只读探测）：
+
+| 类别 | 验证结果 |
+| --- | --- |
+| 加密协议 | v2 信封、RSA-3072、AAD 绑定、`kid` 轮换、`ts` 过期、`nonce` 重放均按预期拒绝 |
+| 认证与越权 | 未认证接口 401；普通用户与审核员访问后台接口均 403；批量操作无绕过 |
+| 注入 | 搜索/联想/登录标识符 SQL 注入均无效（全部参数化）；原型污染载荷被清洗 |
+| XSS | 昵称、简介 HTML 被清洗；圈名脚本标签直接 400 |
+| 上传 | 伪装脚本 415、双扩展名 415、路径穿越文件名被重命名、超 8MB 413 |
+| CSRF | 跨站 Origin、`Origin: null`、`Sec-Fetch-Site: cross-site` 均 403 |
+| 信息泄露 | `/.env`、`/.git/config`、`/package.json`、数据库路径、上传目录穿越均 404 |
+| 防爆破 | 连续失败触发 `LOGIN_LOCKED`；注册失败累计临时/永久封禁 |
+| 依赖 | `npm audit` 0 漏洞；`multer` 已升级至 2.5.0，`nodemailer` 10.3.1 |
+
+> 说明：`/api/auth/email-check` 会返回邮箱是否已注册，属于注册流程的必要提示（低风险信息暴露）；
+> `/uploads` 为公开资源，已通过服务端重命名、哈希校验与 CSP `sandbox` 降低风险。
+
+### 深度渗透测试（第二轮，2026-11-03）
+
+在首轮 84 项基础上，针对业务逻辑、竞态、上传解析、写放大 DoS、审计链与提权路径做定向攻击。
+本地以生产模式（`NODE_ENV=production`）搭建靶场，最终 19 项回归 + 30 余项定向攻击全部通过：
+
+| 攻击面 | 测试内容 | 结果 |
+| --- | --- | --- |
+| 权限提升 | 普通用户/审核员访问用户管理、批量改角色、系统与邮件配置 | 均 403，无 mass assignment |
+| 越权/IDOR | 普通用户读取后台申请详情、跨账号撤回申请与通知读取 | 403 / 404 / 严格按 `userId` 隔离 |
+| 竞态 | 同一申请 12 路并发审核、重复提交、审批与撤回交错 | 仅 1 次成功，圈名唯一索引兜底 |
+| 上传解析 | SVG 伪装 PNG、MIME/扩展名错配、PNG+PHP 多语言、路径穿越 | 415 / 404；静态响应带 `nosniff` + CSP `sandbox` |
+| 磁盘耗尽 | 业务校验失败是否遗留文件、重复上传配额 | 失败即删除；新增 200MB/小时/用户配额 |
+| 写放大 DoS | 浏览量、搜索热词高频写入；通知 ids 超大数组 | 改为 3 秒合并落库；`markRead` 改 Set 并限 1000 条 |
+| 业务逻辑 | 封禁用户申请审核、管理员转移归属 | 均 409，封禁后不再获得圈名 |
+| 审计链 | 重启后校验、直接改库篡改 `detail` | 定位到被篡改日志（`ok:false`） |
+| 加密链路 | 加密登录、密文重放、AAD 路径错配 | 200 / 400 / 400，`nonce` 与 AAD 绑定有效 |
+| 注入/信息泄露 | 深层 JSON、畸形 JSON、分页越界、敏感文件 | 无 5xx、无堆栈、参数夹紧、全部 404 |
+
+**残留风险（需部署层配合，非应用代码缺陷）**：
+1. 反向代理必须配置 `TRUST_PROXY=1`、`TRUST_PROXY_HOPS=1`、`TRUSTED_PROXIES=127.0.0.1/32`，
+   Nginx 使用 `$proxy_add_x_forwarded_for` 追加真实 IP；否则 XFF 轮换可绕过 IP 限流与注册/登录风控。
+2. Node 默认监听 `0.0.0.0:3000`，应通过防火墙仅允许本机/内网访问，避免绕过 Nginx 直连；
+   Nginx 侧建议启用 Host 白名单、`server_tokens off` 与上传目录独立安全头。
+3. 浏览量、搜索热词属于公开可写计数，仍可被刷量（仅影响展示排序，不涉及权限与资金）。
+4. 历史上传文件无自动回收，长期运行建议按季度清理未被申请/申诉引用的孤儿文件。
+
 
 ---
 

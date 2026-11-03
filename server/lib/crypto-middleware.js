@@ -1,4 +1,5 @@
 import { isEncryptedEnvelope, decryptPayload } from './crypto-layer.js';
+import { trustedClientIp } from './ip.js';
 import { eventLog } from './logger.js';
 
 /**
@@ -19,6 +20,25 @@ const MAX_FAIL_PER_WINDOW = 20;
 
 /** 仅作用于写操作与登录类接口，GET 不需要加密 */
 const PROTECTED_PREFIXES = ['/api/auth', '/api/me', '/api/claims', '/api/appeals', '/api/admin'];
+
+/**
+ * 生产环境强制加密的敏感接口（JSON 请求体）
+ * 这些接口涉及密码、验证码等凭据，明文传输等于把凭据暴露在中间人面前。
+ * 前端已统一接入加密；如确有明文脚本调用需求，可设置 ALLOW_PLAINTEXT_SENSITIVE=1。
+ */
+const STRICT_PATHS = new Set([
+  '/api/auth/register',
+  '/api/auth/login',
+  '/api/auth/login-code',
+  '/api/auth/send-code',
+  '/api/auth/change-password',
+  '/api/me/password',
+  '/api/me/phone',
+]);
+
+const REQUIRE_ENCRYPTED =
+  process.env.REQUIRE_ENCRYPTED === '1' ||
+  (process.env.NODE_ENV === 'production' && process.env.ALLOW_PLAINTEXT_SENSITIVE !== '1');
 
 function shouldDecrypt(req) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return false;
@@ -47,18 +67,38 @@ function noteFailure(ip) {
 
 export function decryptRequest(req, res, next) {
   if (!shouldDecrypt(req)) return next();
-  if (!isEncryptedEnvelope(req.body)) return next(); // 明文请求放行，由业务层决定是否强制
+  if (!isEncryptedEnvelope(req.body)) {
+    // 带 enc 字段但字段不全（或旧版 v1 信封）：明确拒绝，不能当成明文放行
+    if (req.body && typeof req.body === 'object' && req.body.enc) {
+      return res.status(400).json({ error: '加密请求格式不正确，请刷新页面后重试', code: 'DECRYPT_FAILED' });
+    }
+    // 生产环境拒绝敏感接口的明文凭据请求，防止降级为明文被中间人窃取
+    if (REQUIRE_ENCRYPTED && STRICT_PATHS.has(req.path)) {
+      eventLog(req, '拒绝明文敏感请求', `${req.method} ${req.path}`, 'error');
+      return res.status(400).json({
+        error: '该操作必须使用加密请求，请刷新页面后重试',
+        code: 'ENCRYPTION_REQUIRED',
+      });
+    }
+    return next();
+  }
 
-  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  // 使用与限流一致的受信客户端 IP，避免伪造 X-Forwarded-For 绕过解密失败计数
+  const ip = trustedClientIp(req) || req.socket?.remoteAddress || 'unknown';
   if (tooManyFailures(ip)) {
     return res.status(429).json({ error: '解密失败次数过多，请稍后再试', code: 'DECRYPT_RATE_LIMITED' });
   }
 
   try {
-    const plain = decryptPayload(req.body.enc);
+    const plain = decryptPayload(req.body.enc, { path: req.path, method: req.method });
     if (!plain || typeof plain !== 'object' || Array.isArray(plain)) {
       throw new Error('解密结果格式不正确');
     }
+    // 移除协议层字段，业务路由只看到真正的请求参数
+    delete plain.ts;
+    delete plain.nonce;
+    delete plain.path;
+    delete plain.method;
     req.body = plain;
     req.encrypted = true;
     next();

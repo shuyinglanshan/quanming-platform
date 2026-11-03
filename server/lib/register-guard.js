@@ -34,7 +34,7 @@ export function saveRegisterGuardConfig(input = {}) {
     tempBlockMinutes: clamp(Number(input.tempBlockMinutes) || cur.tempBlockMinutes, 1, 10080),
     permBlockAfter: clamp(Number(input.permBlockAfter) || cur.permBlockAfter, 1, 20),
   };
-  save();
+  save('register_attempts');
   return getRegisterGuardConfig();
 }
 
@@ -117,7 +117,7 @@ export function recordRegisterAttempt(req, detail = '', { success = false } = {}
     record.failures.push(now);
   }
   all[ip] = record;
-  save();
+  save('register_attempts');
 
   // 成功注册不触发封禁，只受频率闸门约束
   if (success) return { blocked: false, remaining: Math.max(0, conf.maxPerWindow - record.attempts.length) };
@@ -131,7 +131,7 @@ export function recordRegisterAttempt(req, detail = '', { success = false } = {}
 
     if (blocks >= conf.permBlockAfter) {
       blockIpPermanently(ip, { reason: `注册接口频繁失败（累计 ${blocks} 次），已自动永久拉黑`, by: 'system' });
-      save();
+      save('register_attempts');
       return { blocked: true, permanent: true, blocks, detail };
     }
     const seconds = conf.tempBlockMinutes * 60;
@@ -149,7 +149,7 @@ export function resetRegisterAttempts(req) {
   const rec = store()[ip];
   if (rec) {
     rec.failures = [];
-    save();
+    save('register_attempts');
   }
 }
 

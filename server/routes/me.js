@@ -1,5 +1,6 @@
 import express from 'express';
-import { get, all, run } from '../lib/db-sqlite.js';
+import { get, all } from '../lib/db-sqlite.js';
+import { db, save } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { validatePassword, sanitizeText, normalizePhone } from '../lib/util.js';
 import { hashPassword, verifyPassword, isSha256Hex } from '../lib/password.js';
@@ -12,15 +13,14 @@ import {
   consumeBindQuota,
   userStats,
 } from '../lib/repo-user.js';
-import { providerStatus } from '../lib/oauth.js';
 
 const router = express.Router();
 router.use(requireAuth);
 
 const PLATFORMS = {
-  qq: { label: 'QQ', hint: '通过 QQ 互联授权绑定' },
-  wechat: { label: '微信', hint: '通过微信开放平台扫码授权绑定' },
-  xiaohongshu: { label: '小红书', hint: '通过小红书开放平台授权绑定' },
+  qq: { label: 'QQ', hint: '由管理员核对账号信息后手动绑定' },
+  wechat: { label: '微信', hint: '由管理员核对账号信息后手动绑定' },
+  xiaohongshu: { label: '小红书', hint: '由管理员核对账号信息后手动绑定' },
 };
 
 /** 个人中心数据 */
@@ -49,7 +49,8 @@ router.get('/profile', (req, res) => {
     id: c.id,
     name: c.name,
     description: c.description,
-    images: all('SELECT url,name,size,mime,sha256 FROM attachments WHERE owner_type=? AND owner_id=?', 'claim', c.id),
+    // 图片统一取自主数据层，避免读取不存在的 attachments 表导致接口报错
+    images: db.claims.find((x) => x.id === c.id)?.images || [],
     status: c.status,
     rejectReason: c.reject_reason,
     reviewedAt: c.reviewed_at,
@@ -66,7 +67,7 @@ router.get('/profile', (req, res) => {
     name: a.name,
     reason: a.reason,
     description: a.description,
-    images: all('SELECT url,name,size,mime,sha256 FROM attachments WHERE owner_type=? AND owner_id=?', 'appeal', a.id),
+    images: db.appeals.find((x) => x.id === a.id)?.images || [],
     status: a.status,
     rejectReason: a.reject_reason,
     createdAt: a.created_at,
@@ -86,7 +87,6 @@ router.get('/profile', (req, res) => {
     platforms: Object.fromEntries(
       Object.entries(PLATFORMS).map(([k, v]) => [k, { label: v.label, hint: v.hint }]),
     ),
-    oauth: providerStatus(),
   });
 });
 
@@ -121,7 +121,6 @@ router.get('/accounts', (req, res) => {
     usage: user.bindingUsage,
     limit: 3,
     platforms: PLATFORMS,
-    oauth: providerStatus(),
   });
 });
 
@@ -129,7 +128,7 @@ router.get('/accounts', (req, res) => {
 router.post('/phone', (req, res) => {
   const { phone, password } = req.body || {};
   const u = findUserById(req.user.id);
-  if (!verifyPassword(String(password || ''), u.password_hash)) {
+  if (!verifyPassword(String(password || ''), u.passwordHash)) {
     return res.status(400).json({ error: '请输入正确的登录密码以确认身份' });
   }
   const target = normalizePhone(phone);
@@ -148,17 +147,18 @@ router.post('/phone', (req, res) => {
 router.post('/password', (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   const u = findUserById(req.user.id);
-  if (!verifyPassword(String(currentPassword || ''), u.password_hash)) {
+  if (!verifyPassword(String(currentPassword || ''), u.passwordHash)) {
     return res.status(400).json({ error: '当前密码不正确' });
   }
   const err = isSha256Hex(newPassword) ? null : validatePassword(newPassword);
   if (err) return res.status(400).json({ error: err });
 
-  updateUser(u.id, { password_hash: hashPassword(newPassword) });
+  updateUser(u.id, { passwordHash: hashPassword(newPassword) });
   // 失效其他会话
   const token = req.session?.token;
   if (token) {
-    run('DELETE FROM sessions WHERE user_id = ? AND token != ?', u.id, token);
+    db.sessions = db.sessions.filter((s) => !(s.userId === u.id && s.token !== token));
+    save('sessions');
   }
   eventLog(req, '修改登录密码', u.email || u.username);
   res.json({ ok: true, revokedOthers: true });

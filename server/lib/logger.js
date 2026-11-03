@@ -1,47 +1,34 @@
 import crypto from 'node:crypto';
-import { db, save } from './db.js';
-
-/**
- * 日志批量落盘调度
- * 访问日志属于高频写入，若每条都触发全量 JSON 落盘会阻塞事件循环
- * （实测 db 287KB 时并发 p99 从 9ms 恶化到 839ms）。
- * 这里改为内存累积 + 定时批量刷盘。
- */
-let logFlushTimer = null;
-let pendingLogs = 0;
-
-function scheduleLogFlush() {
-  pendingLogs += 1;
-  // 达到批量阈值立即落盘，避免内存无界增长
-  if (pendingLogs >= 200) {
-    pendingLogs = 0;
-    if (logFlushTimer) {
-      clearTimeout(logFlushTimer);
-      logFlushTimer = null;
-    }
-    save('logs');
-    return;
-  }
-  if (logFlushTimer) return;
-  logFlushTimer = setTimeout(() => {
-    logFlushTimer = null;
-    pendingLogs = 0;
-    save('logs');
-  }, 1000);
-  if (typeof logFlushTimer.unref === 'function') logFlushTimer.unref();
-}
+import { db } from './db.js';
+import { saveLog, pruneLogs } from './repo.js';
 import { clientIp, parseUA } from './util.js';
 
 const MAX_LOGS = 2000;
+let logWrites = 0;
+
+/**
+ * 每条日志立即落库（写穿，不做延迟批量缓存）。
+ * 每写入 200 条清理一次历史记录，数据库与内存保持同样的最新 2000 条。
+ */
+function persistLog(entry) {
+  try {
+    saveLog(entry);
+    logWrites += 1;
+    if (logWrites % 200 === 0) pruneLogs(MAX_LOGS);
+  } catch (err) {
+    console.error('[logger] 日志落库失败:', err.message);
+  }
+}
 
 /**
  * 日志完整性哈希链
  * 每条日志都包含「上一条日志的哈希」，形成链式结构。
  * 若有人删改中间某条日志，后续哈希校验会失败，可用于取证与审计。
+ * 进程重启时从数据库最新一条日志继续衔接，避免出现断链。
  */
-let lastHash = 'genesis';
+let lastHash = db.logs[0]?.chain || 'genesis';
 
-function chainHash(entry) {
+function chainHash(entry, prevHash) {
   const payload = JSON.stringify({
     ts: entry.ts,
     ip: entry.ip,
@@ -49,21 +36,38 @@ function chainHash(entry) {
     path: entry.path,
     status: entry.status,
     action: entry.action,
-    prev: lastHash,
+    // v2 起 detail/email/ua 同样纳入哈希，避免只改审计详情而不破坏链
+    detail: entry.detail || '',
+    email: entry.email || '',
+    level: entry.level || 'info',
+    ua: entry.ua || '',
+    prev: prevHash,
   });
   return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 32);
 }
 
 /** 校验日志链完整性，返回 { ok, brokenAt } */
 export function verifyLogChain() {
-  let prev = 'genesis';
   // 日志按时间倒序存储，从最旧到最新校验
   const ordered = [...db.logs].reverse();
-  for (const entry of ordered) {
-    if (entry.chain && entry.prev !== prev) {
+  if (!ordered.length) return { ok: true, total: 0 };
+
+  // 最旧一条的 prev 可能指向已被裁剪的历史日志，无法回溯，只校验其后的链接
+  let prev = ordered[0].chain || ordered[0].prev || 'genesis';
+  if (ordered[0].v === 2 && chainHash(ordered[0], ordered[0].prev) !== ordered[0].chain) {
+    return { ok: false, brokenAt: ordered[0].id, ts: ordered[0].ts };
+  }
+  for (let i = 1; i < ordered.length; i += 1) {
+    const entry = ordered[i];
+    if (!entry.chain) continue; // 历史无哈希数据，跳过不阻断
+    if (entry.prev !== prev) {
       return { ok: false, brokenAt: entry.id, ts: entry.ts };
     }
-    prev = entry.chain || prev;
+    // v2 日志重算整条哈希，可发现 detail/email/ua 等字段被篡改；旧日志仅校验链接
+    if (entry.v === 2 && chainHash(entry, entry.prev) !== entry.chain) {
+      return { ok: false, brokenAt: entry.id, ts: entry.ts };
+    }
+    prev = entry.chain;
   }
   return { ok: true, total: ordered.length };
 }
@@ -145,13 +149,14 @@ export function accessLog(req, res, startedAt) {
     email: req.user?.email || null,
     ua: req.get('user-agent')?.slice(0, 220) || '',
     ...ua,
+    v: 2,
   };
   entry.prev = lastHash;
-  entry.chain = chainHash(entry);
+  entry.chain = chainHash(entry, entry.prev);
   lastHash = entry.chain;
   db.logs.unshift(entry);
   if (db.logs.length > MAX_LOGS) db.logs.length = MAX_LOGS;
-  scheduleLogFlush();
+  persistLog(entry);
 }
 
 export function requestLogger(req, res, next) {
@@ -180,11 +185,12 @@ export function eventLog(req, action, detail = '', level = 'info') {
     email: req.user?.email || emailMatch?.[0] || null,
     ua: req.get('user-agent')?.slice(0, 220) || '',
     ...ua,
+    v: 2,
   };
   entry.prev = lastHash;
-  entry.chain = chainHash(entry);
+  entry.chain = chainHash(entry, entry.prev);
   lastHash = entry.chain;
   db.logs.unshift(entry);
   if (db.logs.length > MAX_LOGS) db.logs.length = MAX_LOGS;
-  scheduleLogFlush();
+  persistLog(entry);
 }

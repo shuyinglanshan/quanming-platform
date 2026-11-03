@@ -57,7 +57,10 @@ const hashCode = (code) => crypto.createHash('sha256').update(String(code)).dige
 
 function cleanupCodes() {
   const now = Date.now();
+  const before = db.codes.length;
   db.codes = db.codes.filter((c) => c.expiresAt > now - 60_000);
+  // 内存中删除的过期验证码必须同步删除数据库行，避免无限增长
+  if (db.codes.length !== before) save('codes');
 }
 
 function defaultBindings() {
@@ -170,7 +173,7 @@ router.post('/send-code', async (req, res) => {
     consumed: false,
   };
   db.codes.push(record);
-  save();
+  save('codes');
 
   try {
     const result = await sendCodeMail(email, code, purpose);
@@ -185,7 +188,7 @@ router.post('/send-code', async (req, res) => {
     console.error('[auth] 验证码邮件发送失败:', err.message);
     // 发送失败则作废本次验证码，避免占用发送次数
     db.codes = db.codes.filter((c) => c.id !== record.id);
-    save();
+    save('codes');
     if (err.code === 'MAIL_NOT_CONFIGURED') return res.status(503).json({ error: err.message });
     res.status(502).json({ error: '验证码邮件发送失败，请稍后重试或联系管理员' });
   }
@@ -203,11 +206,11 @@ function consumeCode(email, code, purpose) {
   if (record.attempts >= 5) return { ok: false, error: '验证码错误次数过多，请重新获取' };
   if (record.codeHash !== hashCode(code)) {
     record.attempts += 1;
-    save();
+    save('codes');
     return { ok: false, error: `验证码不正确，还可尝试 ${5 - record.attempts} 次` };
   }
   record.consumed = true;
-  save();
+  save('codes');
   return { ok: true, record };
 }
 
@@ -382,7 +385,7 @@ router.post('/register', async (req, res) => {
   const token = createSession(user.id);
   setSessionCookie(res, token);
   eventLog(req, '注册账号', method === 'phone' ? `${user.username} · ${user.phone}` : `${user.username} · ${user.email}`);
-  res.status(201).json({ user: publicUser(user), token });
+  res.status(201).json({ user: publicUser(user) });
 });
 
 /* ---------------- 密码登录（邮箱 / 手机号 / 用户名） ---------------- */
@@ -450,7 +453,7 @@ router.post('/login', (req, res) => {
   const token = createSession(user.id);
   setSessionCookie(res, token);
   eventLog(req, '登录成功', user.email || user.phone || user.username);
-  res.json({ user: publicUser(user), token });
+  res.json({ user: publicUser(user) });
 });
 
 /* ---------------- 验证码登录（QQ 邮箱） ---------------- */
@@ -471,7 +474,7 @@ router.post('/login-code', (req, res) => {
   const token = createSession(user.id);
   setSessionCookie(res, token);
   eventLog(req, '验证码登录成功', user.email);
-  res.json({ user: publicUser(user), token });
+  res.json({ user: publicUser(user) });
 });
 
 /* ---------------- 会话 ---------------- */

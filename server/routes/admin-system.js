@@ -4,6 +4,7 @@ import { requireAdmin } from '../lib/auth.js';
 import { paginate } from '../lib/util.js';
 import { eventLog, verifyLogChain } from '../lib/logger.js';
 import { broadcastNotification, createNotification, notifyUser } from '../lib/notify.js';
+import { deleteNotification } from '../lib/repo.js';
 import {
   publicMailConfig,
   saveMailConfig,
@@ -194,6 +195,8 @@ router.delete('/notifications/:id', requireAdmin, (req, res) => {
   const before = db.notifications.length;
   db.notifications = db.notifications.filter((n) => n.id !== req.params.id);
   if (db.notifications.length === before) return res.status(404).json({ error: '通知不存在' });
+  // 显式删除数据库行，避免重启后已删除通知重新出现
+  deleteNotification(req.params.id);
   save();
   eventLog(req, '删除通知', req.params.id);
   res.json({ ok: true });
