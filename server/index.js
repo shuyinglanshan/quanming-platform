@@ -27,6 +27,8 @@ import appealRoutes from './routes/appeals.js';
 import meRoutes from './routes/me.js';
 import notificationRoutes from './routes/notifications.js';
 import adminRoutes from './routes/admin.js';
+import adminFeedbackRoutes from './routes/admin-feedback.js';
+import feedbackRoutes from './routes/feedback.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -80,6 +82,8 @@ app.use('/api/claims', claimRoutes);
 app.use('/api/appeals', appealRoutes);
 app.use('/api/me', meRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/admin', adminFeedbackRoutes);
 app.use('/api/admin', adminRoutes);
 
 app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
@@ -133,6 +137,7 @@ if (fs.existsSync(WEB_DIST)) {
     '/login',
     '/register',
     '/about',
+    '/feedback',
     '/me',
     '/notifications',
     '/admin',

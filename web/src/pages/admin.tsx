@@ -17,6 +17,8 @@ import {
   UserRound,
   Users,
   Image as ImageIcon,
+  MessageSquare,
+  Crown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +32,8 @@ import { NotificationsPanel } from '@/components/admin/notifications-panel';
 import { MailPanel } from '@/components/admin/mail-panel';
 import { SecurityPanel } from '@/components/admin/security-panel';
 import { AvatarsPanel } from '@/components/admin/avatars-panel';
+import { FeedbackPanel } from '@/components/admin/feedback-panel';
+import { RolesPanel } from '@/components/admin/roles-panel';
 import { StatCard, TrendChart, type TrendPoint } from '@/components/admin/trend-chart';
 import { api, ApiError, type Claim, type Appeal } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -49,6 +53,8 @@ type Stats = {
     appeals: number;
     appealsPending: number;
     avatarsPending: number;
+    feedbackPending: number;
+    feedbackTotal: number;
     visits: number;
     visits24h: number;
     passRate: number;
@@ -80,7 +86,9 @@ const NAV: NavItem[] = [
   { key: 'claims', label: '归属审核', icon: ShieldCheck, permission: 'review', badge: (s) => s?.cards.pending ?? 0 },
   { key: 'appeals', label: '归属申诉', icon: Gavel, permission: 'appeal', badge: (s) => s?.cards.appealsPending ?? 0 },
   { key: 'avatars', label: '头像审核', icon: ImageIcon, permission: 'users', badge: (s) => s?.cards.avatarsPending ?? 0 },
+  { key: 'feedback', label: '反馈处理', icon: MessageSquare, permission: 'feedback', badge: (s) => s?.cards.feedbackPending ?? 0 },
   { key: 'users', label: '用户与权限', icon: Users, permission: 'users' },
+  { key: 'roles', label: '角色与功能权限', icon: Crown, permission: 'users' },
   { key: 'names', label: '圈名管理', icon: Sparkles, permission: 'names' },
   { key: 'notifications', label: '通知发布', icon: Megaphone, permission: 'notify' },
   { key: 'mail', label: '邮箱配置', icon: Mail, permission: 'settings' },
@@ -173,7 +181,7 @@ export default function AdminPage() {
       <div className="grid gap-4 lg:grid-cols-[210px_1fr]">
         <aside className="glass h-fit min-w-0 rounded-2xl p-2 lg:sticky lg:top-20">
           {/* 移动端横向滚动不换行，标题过长时靠 overflow 滚动而非撑破布局 */}
-          <nav className="no-scrollbar flex gap-1 overflow-x-auto pb-0.5 lg:flex-col lg:overflow-visible lg:pb-0">
+          <nav className="flex flex-wrap gap-1 pb-0.5 sm:gap-1.5 lg:flex-col lg:flex-nowrap lg:overflow-visible lg:pb-0">
             {nav.map((n) => {
               const count = n.badge?.(stats) ?? 0;
               return (
@@ -181,7 +189,7 @@ export default function AdminPage() {
                   key={n.key}
                   onClick={() => setTab(n.key)}
                   className={cn(
-                    'relative flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] whitespace-nowrap transition',
+                    'relative flex min-w-0 items-center gap-1.5 rounded-xl px-2.5 py-2 text-[12px] whitespace-nowrap transition sm:gap-2 sm:px-3 sm:py-2.5 sm:text-[13px]',
                     tab === n.key
                       ? 'bg-gradient-to-r from-violet-500/25 to-indigo-500/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.1)]'
                       : 'text-slate-400 hover:bg-white/[0.05] hover:text-slate-200',
@@ -230,6 +238,8 @@ export default function AdminPage() {
           {tab === 'claims' && <ClaimsPanel onChanged={() => load(true)} />}
           {tab === 'appeals' && <AppealsPanel onChanged={() => load(true)} />}
           {tab === 'avatars' && <AvatarsPanel onChanged={() => load(true)} />}
+          {tab === 'feedback' && <FeedbackPanel onChanged={() => load(true)} />}
+          {tab === 'roles' && <RolesPanel />}
           {tab === 'users' && <UsersPanel onChanged={() => load(true)} currentUserId={user?.id} />}
           {tab === 'names' && <NamesPanel onChanged={() => load(true)} />}
           {tab === 'notifications' && <NotificationsPanel onChanged={() => load(true)} />}

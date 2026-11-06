@@ -322,3 +322,24 @@ CREATE TABLE IF NOT EXISTS avatar_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_avatar_requests_status ON avatar_requests(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_avatar_requests_user ON avatar_requests(user_id);
+
+-- ============ 用户反馈 / 漏洞报告 ============
+CREATE TABLE IF NOT EXISTS feedback (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT,                         -- 允许匿名反馈
+  kind          TEXT NOT NULL,                -- bug | suggestion | vulnerability | other
+  kind_other    TEXT,                         -- 选择「其他」时用户自填
+  title         TEXT NOT NULL,
+  content       TEXT NOT NULL,
+  contact       TEXT,                         -- 可选联系方式
+  page_path     TEXT,                         -- 提交页面，便于定位
+  image_url     TEXT,                         -- 可选截图
+  status        TEXT NOT NULL DEFAULT 'pending', -- pending | read | replied | closed
+  read_at       TEXT,
+  reply         TEXT,                         -- 管理员答复
+  replied_at    TEXT,
+  replied_by    TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status_time ON feedback(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at DESC);

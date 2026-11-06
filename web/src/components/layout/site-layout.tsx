@@ -12,6 +12,7 @@ import {
   X,
   Info,
   Bell,
+  MessageSquare,
 } from 'lucide-react';
 import { Aurora } from '@/components/aurora';
 import { PageTransition } from '@/components/page-transition';
@@ -34,6 +35,7 @@ import { DEVELOPER, SITE_NAME } from '@/lib/site';
 
 const NAV = [
   { to: '/', label: '圈名广场', icon: Search, end: true },
+  { to: '/feedback', label: '反馈', icon: MessageSquare },
   { to: '/about', label: '关于项目', icon: Info },
 ];
 

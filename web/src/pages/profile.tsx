@@ -26,6 +26,7 @@ import {
   Award,
   Clock3 as ClockIcon,
   Trash2 as TrashIcon,
+  MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -312,8 +313,8 @@ export default function ProfilePage() {
             { label: '被驳回', value: stats.rejected, icon: X, tone: 'text-rose-200' },
             { label: '申诉中', value: stats.appealsPending, icon: Flag, tone: 'text-sky-200' },
           ].map((s) => (
-            <div key={s.label} className="rounded-2xl border border-white/8 bg-white/[0.035] px-3.5 py-3">
-              <div className="flex items-center gap-1.5 text-[11.5px] text-slate-500">
+            <div key={s.label} className="min-w-0 rounded-2xl border border-white/8 bg-white/[0.035] px-3 py-3">
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] leading-snug text-slate-400">
                 <s.icon className={cn('size-3', s.tone)} />
                 {s.label}
               </div>
@@ -325,18 +326,19 @@ export default function ProfilePage() {
 
       <Tabs value={tab} onValueChange={setTab} className="mt-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <TabsList className="basis-full sm:basis-auto">
-            <TabsTrigger value="names">
+          <TabsList className="no-scrollbar flex w-full max-w-full flex-nowrap overflow-x-auto sm:w-auto">
+            <TabsTrigger value="names" className="shrink-0">
               我的圈名 <span className="ml-0.5 text-[10px] text-slate-500">{names.length}</span>
             </TabsTrigger>
-            <TabsTrigger value="claims">
+            <TabsTrigger value="claims" className="shrink-0">
               归属申请 <span className="ml-0.5 text-[10px] text-slate-500">{claims.length}</span>
             </TabsTrigger>
-            <TabsTrigger value="appeals">
+            <TabsTrigger value="appeals" className="shrink-0">
               归属申诉 <span className="ml-0.5 text-[10px] text-slate-500">{data.appeals.length}</span>
             </TabsTrigger>
-            <TabsTrigger value="bindings">账号绑定</TabsTrigger>
-            <TabsTrigger value="security">安全设置</TabsTrigger>
+            <TabsTrigger value="bindings" className="shrink-0">账号绑定</TabsTrigger>
+            <TabsTrigger value="security" className="shrink-0">安全设置</TabsTrigger>
+            <TabsTrigger value="feedback" className="shrink-0">我的反馈</TabsTrigger>
           </TabsList>
           <Button size="sm" className="self-start sm:self-auto" onClick={() => setShowForm(true)}>
             <Plus className="size-3.5" /> 提交归属审核
@@ -713,6 +715,33 @@ export default function ProfilePage() {
               每月最多修改 {data.binding.limit} 次绑定，次数用尽后需等待下月重置或联系管理员。
             </span>
           </div>
+        </TabsContent>
+
+        {/* 我的反馈 */}
+        <TabsContent value="feedback" className="mt-4">
+          <Card className="gap-4 p-5">
+            <div className="flex items-center gap-2.5">
+              <div className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.05]">
+                <MessageSquare className="size-4 text-violet-200" />
+              </div>
+              <div>
+                <div className="text-[14px] font-medium text-white">反馈与漏洞提交</div>
+                <div className="text-[11px] text-slate-500">提交 Bug、建议或安全漏洞，并查看管理员答复</div>
+              </div>
+            </div>
+            <p className="text-[12px] leading-relaxed text-slate-400">
+              你提交的反馈会进入管理员处理队列，处理进度与答复会同步到「通知中心」。
+              若反馈内容涉及账号隐私，请勿在公开渠道披露。
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild size="sm">
+                <Link to="/feedback">
+                  <MessageSquare className="size-3.5" /> 前往提交 / 查看
+                </Link>
+              </Button>
+              <JoinGroupButton variant="outline" label="加入交流群反馈" />
+            </div>
+          </Card>
         </TabsContent>
 
         {/* 安全设置 */}

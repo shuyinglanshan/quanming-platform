@@ -6,7 +6,7 @@ export type User = {
   phoneMasked: string;
   username: string;
   nickname: string;
-  role: 'user' | 'admin' | 'assessor';
+  role: 'user' | 'admin' | 'superadmin' | 'assessor';
   roleLabel?: string;
   status: 'active' | 'banned';
   bio: string;
@@ -62,7 +62,7 @@ export type Claim = {
   };
 };
 
-export type Role = 'user' | 'assessor' | 'admin';
+export type Role = 'user' | 'assessor' | 'superadmin' | 'admin';
 
 export type AvatarRequest = {
   id: string;
@@ -221,4 +221,32 @@ export type PageResult<T> = {
   page: number;
   pageSize: number;
   pages: number;
+};
+
+export type FeedbackKind = { key: string; label: string; hint: string };
+
+export type Feedback = {
+  id: string;
+  kind: string;
+  kindLabel: string;
+  kindOther: string;
+  title: string;
+  content: string;
+  contact: string;
+  pagePath: string;
+  imageUrl: string;
+  status: 'pending' | 'read' | 'replied' | 'closed';
+  readAt: string | null;
+  reply: string;
+  repliedAt: string | null;
+  repliedBy: string | null;
+  createdAt: string;
+  user?: {
+    id: string;
+    nickname: string;
+    username: string;
+    email: string;
+    avatarUrl: string;
+    avatarHue: number;
+  } | null;
 };

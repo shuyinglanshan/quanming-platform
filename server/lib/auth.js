@@ -86,8 +86,8 @@ export function requireAdmin(req, res, next) {
 /** 管理员或审核员 */
 export function requireStaff(req, res, next) {
   if (!req.user) return res.status(401).json({ error: '请先登录后再继续操作' });
-  if (!['admin', 'assessor'].includes(req.user.role)) {
-    return res.status(403).json({ error: '仅管理员与审核员可以访问该资源' });
+  if (!['admin', 'superadmin', 'assessor'].includes(req.user.role)) {
+    return res.status(403).json({ error: '仅管理员、超级管理员与审核员可以访问该资源' });
   }
   next();
 }

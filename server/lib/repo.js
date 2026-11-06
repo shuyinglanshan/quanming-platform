@@ -728,3 +728,57 @@ export function saveAvatarRequest(r) {
 export function deleteAvatarRequest(id) {
   getDb().prepare('DELETE FROM avatar_requests WHERE id=?').run(id);
 }
+
+/* ================= feedback ================= */
+export function mapFeedback(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id || null,
+    kind: row.kind,
+    kindOther: row.kind_other || '',
+    title: row.title,
+    content: row.content,
+    contact: row.contact || '',
+    pagePath: row.page_path || '',
+    imageUrl: row.image_url || '',
+    status: row.status,
+    readAt: row.read_at || null,
+    reply: row.reply || '',
+    repliedAt: row.replied_at || null,
+    repliedBy: row.replied_by || null,
+    createdAt: row.created_at,
+  };
+}
+
+export function saveFeedback(f) {
+  getDb()
+    .prepare(
+      `INSERT INTO feedback (id,user_id,kind,kind_other,title,content,contact,page_path,image_url,status,read_at,reply,replied_at,replied_by,created_at)
+       VALUES (@id,@user_id,@kind,@kind_other,@title,@content,@contact,@page_path,@image_url,@status,@read_at,@reply,@replied_at,@replied_by,@created_at)
+       ON CONFLICT(id) DO UPDATE SET
+        status=excluded.status, read_at=excluded.read_at,
+        reply=excluded.reply, replied_at=excluded.replied_at, replied_by=excluded.replied_by`,
+    )
+    .run({
+      id: f.id,
+      user_id: f.userId || null,
+      kind: f.kind,
+      kind_other: f.kindOther || '',
+      title: f.title,
+      content: f.content,
+      contact: f.contact || '',
+      page_path: f.pagePath || '',
+      image_url: f.imageUrl || '',
+      status: f.status,
+      read_at: f.readAt || null,
+      reply: f.reply || '',
+      replied_at: f.repliedAt || null,
+      replied_by: f.repliedBy || null,
+      created_at: f.createdAt,
+    });
+}
+
+export function deleteFeedback(id) {
+  getDb().prepare('DELETE FROM feedback WHERE id=?').run(id);
+}

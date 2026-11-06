@@ -60,6 +60,7 @@ type Row = User & {
 
 const ROLE_OPTIONS: { value: Role; label: string }[] = [
   { value: 'admin', label: '管理员' },
+  { value: 'superadmin', label: '超级管理员' },
   { value: 'assessor', label: '审核员' },
   { value: 'user', label: '普通用户' },
 ];
@@ -237,6 +238,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
             <SelectContent>
               <SelectItem value="all">全部权限组</SelectItem>
               <SelectItem value="admin">管理员</SelectItem>
+              <SelectItem value="superadmin">超级管理员</SelectItem>
               <SelectItem value="assessor">审核员</SelectItem>
               <SelectItem value="user">普通用户</SelectItem>
             </SelectContent>
@@ -273,7 +275,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
 
         {/* 权限组说明 */}
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          {(['admin', 'assessor', 'user'] as Role[]).map((r) => (
+          {(['admin', 'superadmin', 'assessor', 'user'] as Role[]).map((r) => (
             <div key={r} className="rounded-xl border border-white/8 bg-white/[0.03] p-2.5">
               <div className="flex items-center gap-1.5">
                 <span className={cn('rounded-full border px-1.5 py-0 text-[10px]', ROLE_META[r].tone)}>{ROLE_META[r].label}</span>
@@ -345,7 +347,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
                     <span className="truncate text-[13.5px] font-medium text-white">{u.nickname}</span>
                     <span className={cn('rounded-full border px-1.5 py-0 text-[10px]', ROLE_META[u.role]?.tone || ROLE_META.user.tone)}>
                       {u.role === 'admin' ? <Crown className="mr-0.5 inline size-2.5" /> : null}
-                      {u.role === 'assessor' ? <Gavel className="mr-0.5 inline size-2.5" /> : null}
+                      {u.role === 'assessor' ? <Gavel className="mr-0.5 inline size-2.5" /> : u.role === 'superadmin' ? <ShieldCheck className="mr-0.5 inline size-2.5" /> : null}
                       {ROLE_META[u.role]?.label || '普通用户'}
                     </span>
                     <span className={cn('rounded-full border px-1.5 py-0 text-[10px]', statusTone(u.status))}>
@@ -405,7 +407,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
                           setRoleValue(r.value);
                         }}
                       >
-                        {r.value === 'admin' ? <Crown /> : r.value === 'assessor' ? <Gavel /> : <Users2 />}
+                        {r.value === 'admin' ? <Crown /> : r.value === 'superadmin' ? <ShieldCheck /> : r.value === 'assessor' ? <Gavel /> : <Users2 />}
                         设为{r.label}
                       </DropdownMenuItem>
                     ))}
@@ -644,7 +646,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>封禁「{banTarget?.nickname}」</DialogTitle>
-            <DialogDescription>封禁后该用户将立即退出登录，且无法再次登录。管理员与审核员需先降级为普通用户。</DialogDescription>
+            <DialogDescription>封禁后该用户将立即退出登录，且无法再次登录。管理员、超级管理员与审核员需先降级为普通用户。</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="ban-reason">封禁原因</Label>

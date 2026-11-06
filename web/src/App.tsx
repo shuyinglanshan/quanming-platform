@@ -10,6 +10,7 @@ import AdminPage from './pages/admin';
 import NameDetailPage from './pages/name-detail';
 import NotificationsPage from './pages/notifications';
 import NotFoundPage from './pages/not-found';
+import FeedbackPage from './pages/feedback';
 import RequireAuth from './components/require-auth';
 
 function ScrollToTop() {
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/names/:id" element={<NameDetailPage />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/feedback" element={<FeedbackPage />} />
           <Route
             path="/me"
             element={

@@ -83,6 +83,7 @@ export const db = {
   searches: [],
   captchas: [],
   avatarRequests: [],
+  feedback: [],
   security: {
     blockedIps: [],
     tempBlocks: [],
@@ -119,6 +120,11 @@ function loadAll() {
     .all()
     .map(repo.mapNotification);
   db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC LIMIT 2000').all().map(repo.mapLog);
+  db.feedback = conn
+    .prepare('SELECT * FROM feedback ORDER BY created_at DESC LIMIT 5000')
+    .all()
+    .map(repo.mapFeedback);
+
   db.avatarRequests = conn
     .prepare('SELECT * FROM avatar_requests ORDER BY created_at DESC LIMIT 2000')
     .all()
@@ -229,7 +235,7 @@ const debounceTimers = new Map();
 const PERSIST_TABLES = [
   'users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas',
   'logs', 'searches', 'settings', 'blocked_ips', 'temp_blocks', 'security_events',
-  'register_attempts', 'login_attempts', 'avatar_requests',
+  'register_attempts', 'login_attempts', 'avatar_requests', 'feedback',
 ];
 
 export function markDirty(table) {
@@ -280,6 +286,7 @@ export function persistTables(tables) {
     if (tables.has('codes')) repo.replaceCodes(db.codes);
     if (tables.has('captchas')) repo.replaceCaptchas(db.captchas);
     if (tables.has('avatar_requests')) for (const a of db.avatarRequests) repo.saveAvatarRequest(a);
+    if (tables.has('feedback')) for (const f of db.feedback) repo.saveFeedback(f);
     if (tables.has('logs')) for (const l of db.logs) repo.saveLog(l);
     if (tables.has('searches')) repo.replaceSearches(db.searches);
     if (tables.has('settings')) for (const [k, v] of Object.entries(db.settings)) repo.saveSettings(k, v);
@@ -384,7 +391,7 @@ export function publicUser(u) {
     bindings: u.bindings || {},
     bindingUsage: bindingUsage(u),
     stats: u.stats || {},
-    permissions: ROLE_PERMISSIONS[u.role] || ROLE_PERMISSIONS.user,
+    permissions: effectivePermissions(u.role),
   };
 }
 
@@ -448,23 +455,53 @@ export function maskPhone(phone) {
 }
 
 /* ---------------- 角色权限 ---------------- */
-export const ROLES = ['admin', 'assessor', 'user'];
+export const ROLES = ['admin', 'superadmin', 'assessor', 'user'];
 
 export const ROLE_LABELS = {
   admin: '管理员',
+  superadmin: '超级管理员',
   assessor: '审核员',
   user: '普通用户',
 };
 
 export const ROLE_PERMISSIONS = {
-  admin: ['review', 'appeal', 'users', 'names', 'logs', 'settings', 'notify', 'dashboard'],
-  assessor: ['review', 'appeal', 'dashboard', 'logs'],
+  admin: ['review', 'appeal', 'users', 'names', 'logs', 'settings', 'notify', 'dashboard', 'feedback', 'avatars'],
+  superadmin: ['review', 'appeal', 'dashboard', 'logs', 'avatars', 'feedback'],
+  assessor: ['review', 'appeal', 'dashboard', 'logs', 'avatars'],
   user: [],
 };
 
+/** 可被管理员「功能开关」授予给超管/审核员的权限点 */
+export const DELEGATABLE_PERMISSIONS = ['review', 'appeal', 'avatars', 'feedback', 'logs', 'users', 'names', 'notify'];
+
+/**
+ * 判断用户是否具备某权限
+ * - admin 永远拥有全部权限
+ * - superadmin / assessor 在基础权限之外，可由管理员通过「功能开关」逐项授予
+ *   存储于 db.settings.staffPermissions.grants = { superadmin: [...], assessor: [...] }
+ */
 export function hasPermission(user, permission) {
   if (!user) return false;
-  return (ROLE_PERMISSIONS[user.role] || []).includes(permission);
+  if (user.role === 'admin') return true;
+
+  const base = ROLE_PERMISSIONS[user.role] || [];
+  if (base.includes(permission)) return true;
+
+  const grants = db.settings?.staffPermissions?.grants?.[user.role];
+  if (Array.isArray(grants) && grants.includes(permission)) return true;
+
+  return false;
+}
+
+/** 某角色当前生效的权限清单（基础 + 开关授予） */
+export function effectivePermissions(role) {
+  if (role === 'admin') {
+    return ['review', 'appeal', 'users', 'names', 'logs', 'settings', 'notify', 'dashboard', 'feedback', 'avatars'];
+  }
+  const base = ROLE_PERMISSIONS[role] || [];
+  const grants = db.settings?.staffPermissions?.grants?.[role];
+  const extra = Array.isArray(grants) ? grants : [];
+  return [...new Set([...base, ...extra])];
 }
 
 /* ---------------- 查询助手（优先内存，保证同步语义） ---------------- */

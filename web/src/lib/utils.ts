@@ -62,6 +62,11 @@ export const ROLE_META: Record<string, { label: string; tone: string; desc: stri
     tone: 'border-violet-300/30 bg-violet-400/12 text-violet-200',
     desc: '最高权限：审核、申诉、用户与权限组、圈名、日志、通知、系统设置',
   },
+  superadmin: {
+    label: '超级管理员',
+    tone: 'border-amber-300/30 bg-amber-400/12 text-amber-200',
+    desc: '权限仅次于管理员，高于审核员；具体可用功能由管理员在「角色与功能权限」中配置',
+  },
   assessor: {
     label: '审核员',
     tone: 'border-cyan-300/30 bg-cyan-400/12 text-cyan-200',

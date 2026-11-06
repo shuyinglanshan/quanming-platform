@@ -72,6 +72,16 @@
   }
 }
 
+/* 可读性修正：深色背景下 slate-500/600 对比度过低，统一提亮 */
+@layer utilities {
+  .text-slate-600 {
+    color: rgb(148 163 184 / 0.82); /* 接近 slate-400 */
+  }
+  .text-slate-500 {
+    color: rgb(148 163 184 / 0.95);
+  }
+}
+
 @layer base {
   :root {
     --liquid-blur: 26px;
