@@ -9,19 +9,14 @@ export function NameCard({ item, onOpen, index = 0 }: { item: NameItem; onOpen?:
     <button
       onClick={onOpen}
       className={cn(
-        'group liquid liquid-sheen liquid-flow animate-rise relative overflow-hidden rounded-2xl p-5 text-left',
-        'hover:-translate-y-1 hover:border-white/22',
-        'hover:shadow-[0_30px_64px_-30px_rgba(139,92,246,.6),inset_0_1px_0_rgba(255,255,255,.18)]',
-        'active:translate-y-0 active:scale-[0.985]',
+        'group liquid liquid-sheen animate-rise relative overflow-hidden rounded-2xl p-5 text-left',
+        'transition-[transform,box-shadow,border-color] duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)]',
+        'hover:-translate-y-0.5 hover:border-white/16 hover:shadow-[0_20px_40px_-24px_rgba(139,92,246,.45)]',
+        'active:translate-y-0 active:scale-[0.99]',
       )}
       style={{ animationDelay: `${Math.min(index * 45, 400)}ms` }}
     >
-      <div
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-        style={{
-          background: `radial-gradient(16rem 10rem at 100% 0%, hsl(${hue} 80% 55% / 0.22), transparent 70%)`,
-        }}
-      />
+
       <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

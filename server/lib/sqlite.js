@@ -83,13 +83,38 @@ export const query = {
   exec: (sql) => getDb().exec(sql),
 };
 
-/** 关闭连接（进程退出时） */
+/**
+ * 关闭连接（进程退出时）
+ *
+ * 关键：WAL 模式下已提交的数据先落在 -wal 文件里，
+ * 直接 close() 不会把它合并回主库。
+ * 长期运行会导致主库文件极小、-wal 膨胀到数百 MB，
+ * 且备份时若只拷主库会丢失全部近期数据。
+ *
+ * 因此关闭前必须执行 TRUNCATE checkpoint，把 WAL 全量合并并截断。
+ */
 export function closeDb() {
-  if (instance) {
-    try {
-      instance.close();
-    } catch {}
-    instance = null;
+  if (!instance) return;
+  try {
+    instance.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch (err) {
+    console.error('[sqlite] 关闭前 checkpoint 失败:', err.message);
+  }
+  try {
+    instance.close();
+  } catch {}
+  instance = null;
+}
+
+/** 手动 checkpoint（可在关键写操作后调用） */
+export function checkpoint(mode = 'TRUNCATE') {
+  if (!instance) return false;
+  try {
+    instance.exec(`PRAGMA wal_checkpoint(${mode})`);
+    return true;
+  } catch (err) {
+    console.error('[sqlite] checkpoint 失败:', err.message);
+    return false;
   }
 }
 

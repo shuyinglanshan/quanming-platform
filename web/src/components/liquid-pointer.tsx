@@ -18,20 +18,28 @@ export function LiquidPointer() {
 
     let raf = 0;
     let pending: { el: HTMLElement; x: number; y: number } | null = null;
+    let lastEl: HTMLElement | null = null;
 
     const apply = () => {
       raf = 0;
       if (!pending) return;
       const { el, x, y } = pending;
+      // 只在元素真正变化时才写样式，避免每帧都强制重绘
       const rect = el.getBoundingClientRect();
       el.style.setProperty('--mx', `${x - rect.left}px`);
       el.style.setProperty('--my', `${y - rect.top}px`);
+      lastEl = el;
       pending = null;
     };
 
     const onMove = (e: PointerEvent) => {
+      // 只在 hover 容器上生效，避免全局无效计算
       const target = (e.target as HTMLElement)?.closest?.('.liquid-glass') as HTMLElement | null;
-      if (!target) return;
+      if (!target) {
+        if (lastEl) lastEl = null;
+        return;
+      }
+      if (pending?.el === target && pending.x === e.clientX && pending.y === e.clientY) return;
       pending = { el: target, x: e.clientX, y: e.clientY };
       if (!raf) raf = requestAnimationFrame(apply);
     };

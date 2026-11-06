@@ -77,8 +77,7 @@ export function AuthShell({
           </div>
 
           {/* 右侧表单 */}
-          <div className="liquid liquid-sheen anim-scale-in relative w-full overflow-hidden rounded-3xl bg-[linear-gradient(160deg,rgba(24,24,40,.9),rgba(10,10,20,.95))] p-6 shadow-[0_40px_100px_-40px_rgba(0,0,0,.98)] sm:p-8">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(30rem_22rem_at_85%_-10%,rgba(139,92,246,.22),transparent_70%)]" />
+          <div className="liquid liquid-sheen anim-scale-in relative w-full overflow-hidden rounded-3xl p-6 shadow-[0_24px_60px_-32px_rgba(0,0,0,.9)] sm:p-8">
             <div className="relative">
               <div className="mb-6 space-y-1.5">
                 <h2 className="text-[22px] font-semibold tracking-tight text-white">{title}</h2>

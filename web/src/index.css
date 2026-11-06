@@ -103,10 +103,9 @@
     @apply bg-[#06060c] text-slate-100 antialiased;
     overflow-x: clip;
     font-family: var(--font-sans);
-    background-image:
-      radial-gradient(900px 600px at 12% -8%, rgba(139, 92, 246, 0.22), transparent 60%),
-      radial-gradient(760px 520px at 88% 4%, rgba(34, 211, 238, 0.16), transparent 62%),
-      radial-gradient(700px 520px at 50% 108%, rgba(236, 72, 153, 0.12), transparent 60%);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    letter-spacing: 0.002em;
+    line-height: 1.6;
     min-height: 100vh;
   }
 
@@ -233,22 +232,17 @@
 @utility liquid {
   position: relative;
   isolation: isolate;
-  background:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035) 42%, rgba(255, 255, 255, 0.02) 70%, rgba(255, 255, 255, 0.06)),
-    radial-gradient(120% 80% at 12% -10%, rgba(167, 139, 250, 0.16), transparent 62%);
-  -webkit-backdrop-filter: blur(var(--liquid-blur, 26px)) saturate(180%) brightness(1.08);
-  backdrop-filter: blur(var(--liquid-blur, 26px)) saturate(180%) brightness(1.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.022) 60%, rgba(255, 255, 255, 0.04));
+  -webkit-backdrop-filter: blur(var(--liquid-blur, 18px)) saturate(140%);
+  backdrop-filter: blur(var(--liquid-blur, 18px)) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.16) inset,
-    0 -1px 0 rgba(0, 0, 0, 0.28) inset,
-    0 24px 64px -32px rgba(0, 0, 0, 0.94),
-    0 8px 24px -18px rgba(139, 92, 246, 0.5);
+    0 1px 0 rgba(255, 255, 255, 0.09) inset,
+    0 20px 50px -30px rgba(0, 0, 0, 0.85);
   transition:
-    transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.32s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.32s ease,
-    background 0.32s ease;
+    transform var(--dur-base, 220ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow var(--dur-base, 220ms) var(--ease-out-expo, cubic-bezier(0.16,1,0.3,1)),
+    border-color var(--dur-base, 220ms) ease;
 }
 
 /* 顶部高光带：模拟玻璃边缘折射 */
@@ -258,30 +252,13 @@
     position: absolute;
     inset: 0 0 auto 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
-    opacity: 0.7;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+    opacity: 0.55;
     pointer-events: none;
   }
 }
 
-/* 内部流动光带：悬停时缓慢扫过 */
-@utility liquid-flow {
-  &::after {
-    content: '';
-    position: absolute;
-    inset: -40%;
-    background: linear-gradient(115deg, transparent 38%, rgba(255, 255, 255, 0.1) 48%, rgba(167, 139, 250, 0.12) 54%, transparent 64%);
-    transform: translateX(-60%);
-    opacity: 0;
-    transition: opacity 0.4s ease;
-    pointer-events: none;
-    z-index: -1;
-  }
-  &:hover::after {
-    opacity: 1;
-    animation: liquidSweep 1.4s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-}
+/* 流动光带已移除：保持界面清爽，避免无意义的持续动画 */
 
 @keyframes liquidSweep {
   0% { transform: translateX(-60%); }

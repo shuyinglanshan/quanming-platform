@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { ROOT, DATA_DIR, UPLOAD_DIR } from './paths.js';
-import { getDb, closeDb, transaction } from './sqlite.js';
+import { getDb, closeDb, transaction, checkpoint } from './sqlite.js';
 import * as repo from './repo.js';
 
 /**
@@ -342,8 +342,12 @@ export function dbStats() {
 const shutdown = () => {
   try {
     persistNow();
-  } catch {}
+  } catch (err) {
+    console.error('[db] 关闭前落库失败:', err.message);
+  }
   try {
+    // 合并 WAL 到主库，避免 -wal 文件残留与备份丢数据
+    checkpoint('TRUNCATE');
     closeDb();
   } catch {}
   process.exit(0);
