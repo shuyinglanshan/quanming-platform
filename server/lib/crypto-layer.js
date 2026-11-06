@@ -154,12 +154,20 @@ function consumeNonce(nonce, now) {
 
 function assertFreshPayload(plain, context = {}) {
   const now = Date.now();
-  const ts = Number(plain?.ts);
+
+  // 协议字段统一 _qm_ 前缀，避免与业务字段（如注册接口的 method: 'phone'）冲突。
+  // 兼容旧客户端：若没有 _qm_ 前缀字段，则回退读取无前缀版本。
+  const tsRaw = plain?._qm_ts ?? plain?.ts;
+  const nonceRaw = plain?._qm_nonce ?? plain?.nonce;
+  const pathRaw = plain?._qm_path ?? plain?.path;
+  const methodRaw = plain?._qm_method ?? plain?.method;
+
+  const ts = Number(tsRaw);
   if (!Number.isFinite(ts) || Math.abs(now - ts) > MAX_TS_SKEW) {
     throw new Error('请求已过期，请刷新页面后重试');
   }
 
-  const nonce = String(plain?.nonce || '');
+  const nonce = String(nonceRaw || '');
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(nonce)) {
     throw new Error('请求标识无效，请刷新页面后重试');
   }
@@ -167,10 +175,10 @@ function assertFreshPayload(plain, context = {}) {
     throw new Error('检测到重复请求，请刷新页面后重试');
   }
 
-  if (context.path && String(plain?.path || '') !== context.path) {
+  if (context.path && String(pathRaw || '') !== context.path) {
     throw new Error('请求地址校验失败，请刷新页面后重试');
   }
-  if (context.method && String(plain?.method || '').toUpperCase() !== context.method.toUpperCase()) {
+  if (context.method && String(methodRaw || '').toUpperCase() !== context.method.toUpperCase()) {
     throw new Error('请求方法校验失败，请刷新页面后重试');
   }
 }

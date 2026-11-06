@@ -84,11 +84,12 @@ async function encryptWithKey(
   const aes = await crypto.subtle.importKey('raw', aesKey, { name: 'AES-GCM' }, false, ['encrypt']);
   const plaintext = new TextEncoder().encode(
     JSON.stringify({
+      // 业务字段先展开，协议字段统一用 _qm_ 前缀，避免与业务字段（如注册的 method）冲突
       ...(payload as Record<string, unknown>),
-      ts: Date.now(),
-      nonce: randomNonce(),
-      path,
-      method: method.toUpperCase(),
+      _qm_ts: Date.now(),
+      _qm_nonce: randomNonce(),
+      _qm_path: path,
+      _qm_method: method.toUpperCase(),
     }),
   );
   const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, aes, plaintext);

@@ -94,11 +94,19 @@ export function decryptRequest(req, res, next) {
     if (!plain || typeof plain !== 'object' || Array.isArray(plain)) {
       throw new Error('解密结果格式不正确');
     }
-    // 移除协议层字段，业务路由只看到真正的请求参数
-    delete plain.ts;
-    delete plain.nonce;
-    delete plain.path;
-    delete plain.method;
+    // 只移除协议层字段（_qm_ 前缀）；兼容旧客户端时额外删除无前缀的同名字段，
+    // 但**不能**误删业务字段：例如注册接口的 method 承载 'phone' | 'email'
+    delete plain._qm_ts;
+    delete plain._qm_nonce;
+    delete plain._qm_path;
+    delete plain._qm_method;
+    if (plain._qm_ts === undefined) {
+      // 旧协议回退路径
+      delete plain.ts;
+      delete plain.nonce;
+      delete plain.path;
+      // 注意：不删除 plain.method，避免破坏注册方式等业务语义
+    }
     req.body = plain;
     req.encrypted = true;
     next();
