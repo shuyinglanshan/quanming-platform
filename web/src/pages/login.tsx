@@ -163,7 +163,6 @@ export default function LoginPage() {
               <div className="relative">
                 <Input
                   id="password"
-                onPaste={(e) => e.stopPropagation()}
                   type={showPwd ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

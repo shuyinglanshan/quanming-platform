@@ -117,6 +117,8 @@ export default function RegisterPage() {
   const phoneOk = PHONE_RE.test(phone.trim());
 
   const sendCode = async () => {
+    // 只在邮箱注册模式下校验 QQ 号，避免切到手机号后仍误报
+    if (method !== 'email') return;
     if (!emailValid) return toast.error('请输入 5-11 位 QQ 号');
     setSending(true);
     try {
@@ -304,7 +306,6 @@ export default function RegisterPage() {
           <div className="relative">
             <Input
               id="reg-password"
-              onPaste={(e) => e.stopPropagation()}
               type={showPwd ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -339,7 +340,6 @@ export default function RegisterPage() {
           <Label htmlFor="reg-confirm">确认密码</Label>
           <Input
             id="reg-confirm"
-            onPaste={(e) => e.stopPropagation()}
             type={showPwd ? 'text' : 'password'}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}

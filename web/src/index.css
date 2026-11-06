@@ -130,6 +130,14 @@
     }
   }
 
+  /* 输入类控件始终允许选择与粘贴 */
+  input,
+  textarea,
+  [contenteditable='true'] {
+    -webkit-user-select: text !important;
+    user-select: text !important;
+  }
+
   ::selection {
     background: rgba(167, 139, 250, 0.35);
     color: #fff;

@@ -22,10 +22,16 @@ createRoot(document.getElementById('root')!).render(
         <Toaster
           position="top-center"
           theme="dark"
+          // 显式设置自动消失时间与堆叠上限，避免提示常驻遮挡页面
+          duration={2600}
+          visibleToasts={2}
+          closeButton={false}
+          richColors={false}
           toastOptions={{
+            duration: 2600,
             classNames: {
-              toast: 'glass-strong !rounded-2xl !border-white/12 !text-slate-100',
-              description: '!text-slate-400',
+              toast: 'glass-strong !rounded-2xl !border-white/12 !text-slate-100 !text-[13px]',
+              description: '!text-slate-400 !text-[12px]',
               actionButton: '!bg-violet-500 !text-white',
             },
           }}

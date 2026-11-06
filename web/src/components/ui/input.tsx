@@ -13,6 +13,9 @@ function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
         'placeholder:text-slate-500 selection:bg-violet-500/40',
         'hover:border-white/20 hover:bg-white/[0.06]',
         'focus-visible:border-violet-400/55 focus-visible:bg-white/[0.08] focus-visible:shadow-[inset_0_1px_0_rgba(255,255,255,.08),0_0_0_4px_rgba(139,92,246,.14)]',
+        // 确保输入框始终可选中/可粘贴，不受外层 select-none 影响
+        'select-text',
+        'touch-manipulation',
         'disabled:cursor-not-allowed disabled:opacity-50',
         'file:mr-2 file:rounded-lg file:border-0 file:bg-white/10 file:px-2 file:py-1 file:text-xs file:text-slate-200',
         className
