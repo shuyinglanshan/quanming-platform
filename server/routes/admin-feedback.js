@@ -156,7 +156,8 @@ router.put('/roles/:role/features', requirePermission('users'), (req, res) => {
     return res.status(400).json({ error: '只能为超级管理员或审核员配置功能权限' });
   }
   const features = Array.isArray(req.body?.features) ? req.body.features : [];
-  const ALLOWED = ['review', 'appeal', 'avatars', 'feedback', 'logs', 'users', 'names', 'notify'];
+  // 与 db.js 的 DELEGATABLE_PERMISSIONS 保持一致：高危能力不可委派
+  const ALLOWED = ['review', 'appeal', 'avatars', 'feedback', 'logs'];
   const clean = [...new Set(features.filter((f) => ALLOWED.includes(f)))];
 
   db.settings.staffPermissions = db.settings.staffPermissions || { grants: {} };

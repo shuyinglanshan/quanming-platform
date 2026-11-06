@@ -13,6 +13,39 @@ import { deleteName } from '../lib/repo.js';
 
 const router = express.Router();
 
+/* ================= 角色等级与提权防护 ================= */
+/** 角色等级：数字越大权限越高 */
+const ROLE_RANK = { user: 0, assessor: 1, superadmin: 2, admin: 3 };
+
+/**
+ * 判断操作者能否把目标用户设为某个角色
+ *
+ * 规则（防止「审核员 → 提升自己人 → 拿到 admin」的提权链）：
+ * - 只有真正的 admin 才能授予 admin
+ * - 不能授予高于自己等级的角色
+ * - 不能修改等级高于或等于自己的用户（除非自己是 admin 且目标是普通用户）
+ */
+function canAssignRole(operator, target, nextRole) {
+  const me = ROLE_RANK[operator.role] ?? -1;
+  const targetRank = ROLE_RANK[target.role] ?? -1;
+  const next = ROLE_RANK[nextRole] ?? -1;
+
+  // 仅 admin 可授予 admin
+  if (next >= ROLE_RANK.admin && operator.role !== 'admin') {
+    return { ok: false, error: '只有管理员可以授予管理员权限' };
+  }
+  // 不能授予超过自身等级的角色
+  if (next > me) {
+    return { ok: false, error: '不能授予高于自己权限等级的角色' };
+  }
+  // 不能操作等级不低于自己的账号（admin 可管理除自己外所有人）
+  if (operator.role !== 'admin' && targetRank >= me) {
+    return { ok: false, error: '无权修改同级或更高权限的账号' };
+  }
+  return { ok: true };
+}
+
+
 /** 生成 12 位强随机密码（大小写+数字+符号） */
 function randomPassword(len = 12) {
   const U = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -100,6 +133,10 @@ router.patch('/users/:id', requirePermission('users'), (req, res) => {
   if (status === 'banned' && user.role !== 'user') {
     return res.status(400).json({ error: '请先将该用户降级为普通用户，再执行封禁' });
   }
+  // 提权防护：非 admin 封禁他人时同样受等级约束
+  if (status === 'banned' && req.user.role !== 'admin' && ROLE_RANK[user.role] >= (ROLE_RANK[req.user.role] ?? -1)) {
+    return res.status(403).json({ error: '无权封禁同级或更高权限的账号' });
+  }
   if (role && role !== 'user' && user.id === req.user.id) {
     return res.status(400).json({ error: '不能修改自己的角色' });
   }
@@ -120,6 +157,8 @@ router.patch('/users/:id', requirePermission('users'), (req, res) => {
     changes.push(`状态 → ${status}`);
   }
   if (role && role !== user.role) {
+    const check = canAssignRole(req.user, user, role);
+    if (!check.ok) return res.status(403).json({ error: check.error });
     const from = ROLE_LABELS[user.role];
     user.role = role;
     changes.push(`权限组 ${from} → ${ROLE_LABELS[role]}`);
@@ -144,6 +183,10 @@ router.post('/users/roles', requirePermission('users'), (req, res) => {
   if (!ROLES.includes(role)) return res.status(400).json({ error: '角色不合法' });
   let done = 0;
   let skipped = 0;
+  // 批量操作同样受等级约束，避免绕过单用户接口的限制
+  const batchCheck = canAssignRole(req.user, { role: 'user' }, role);
+  if (!batchCheck.ok) return res.status(403).json({ error: batchCheck.error });
+
   for (const id of ids) {
     const user = findUserById(id);
     if (!user || user.deleted || user.id === req.user.id) {
@@ -151,6 +194,10 @@ router.post('/users/roles', requirePermission('users'), (req, res) => {
       continue;
     }
     if (user.role === role) {
+      skipped += 1;
+      continue;
+    }
+    if (!canAssignRole(req.user, user, role).ok) {
       skipped += 1;
       continue;
     }
@@ -343,6 +390,18 @@ router.post('/users/:id/reset-password', requirePermission('users'), (req, res) 
   if (!u) return res.status(404).json({ error: '用户不存在' });
   if (u.id === req.user.id) return res.status(400).json({ error: '不能在此重置自己的密码，请到个人中心修改' });
 
+  // 提权防护：重置密码等于接管账号，必须严格限制
+  // - 非 admin 不能重置任何管理员/超管密码
+  // - 非 admin 只能重置比自己等级低的账号
+  if (req.user.role !== 'admin') {
+    if (ROLE_RANK[u.role] >= ROLE_RANK.superadmin) {
+      return res.status(403).json({ error: '无权重置管理员或超级管理员的密码' });
+    }
+    if (ROLE_RANK[u.role] >= (ROLE_RANK[req.user.role] ?? -1)) {
+      return res.status(403).json({ error: '无权重置同级或更高权限账号的密码' });
+    }
+  }
+
   const mode = String(req.body?.mode || 'random');
   let plain;
   if (mode === 'manual') {
@@ -395,6 +454,11 @@ router.post('/users/:id/title', requirePermission('users'), (req, res) => {
 router.delete('/users/:id', requirePermission('users'), (req, res) => {
   const user = findUserById(req.params.id);
   if (!user || user.deleted) return res.status(404).json({ error: '用户不存在' });
+
+  // 提权防护：非 admin 不能删除同级或更高权限账号
+  if (req.user.role !== 'admin' && ROLE_RANK[user.role] >= (ROLE_RANK[req.user.role] ?? -1)) {
+    return res.status(403).json({ error: '无权删除同级或更高权限的账号' });
+  }
   if (user.id === req.user.id) return res.status(400).json({ error: '不能删除自己的账号' });
   if (user.role !== 'user') return res.status(400).json({ error: '请先将该用户降级为普通用户' });
 

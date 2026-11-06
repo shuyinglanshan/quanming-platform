@@ -472,7 +472,12 @@ export const ROLE_PERMISSIONS = {
 };
 
 /** 可被管理员「功能开关」授予给超管/审核员的权限点 */
-export const DELEGATABLE_PERMISSIONS = ['review', 'appeal', 'avatars', 'feedback', 'logs', 'users', 'names', 'notify'];
+/**
+ * 可由管理员「功能开关」授予给超管/审核员的权限
+ * 注意：users / names / notify 属于高危能力（可接管账号、下架圈名、群发通知），
+ * 不作为默认可委派项，避免「审核员 → 提权 → 接管」的链条。
+ */
+export const DELEGATABLE_PERMISSIONS = ['review', 'appeal', 'avatars', 'feedback', 'logs'];
 
 /**
  * 判断用户是否具备某权限
