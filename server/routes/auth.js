@@ -433,10 +433,8 @@ router.post('/login', (req, res) => {
         retryAfter: fail.retryAfter,
       });
     }
-    return res.status(401).json({
-      error: `账号或密码不正确，还可尝试 ${fail.remaining} 次`,
-      remaining: fail.remaining,
-    });
+    // 安全：不回显剩余尝试次数，避免攻击者据此精确控制爆破节奏
+    return res.status(401).json({ error: '账号或密码不正确' });
   }
   if (user.status === 'banned') {
     eventLog(req, '登录失败（账号已封禁）', raw, 'error');

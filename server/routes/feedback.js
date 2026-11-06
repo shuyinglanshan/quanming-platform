@@ -64,15 +64,20 @@ router.post('/', attachUser, upload.array('image', 1), (req, res) => {
   if (safeContent.length < 5) return res.status(400).json({ error: '内容至少 5 个字符' });
   if (kind === 'other' && !safeOther) return res.status(400).json({ error: '选择「其他」时请填写类型说明' });
 
-  // 防刷：同一 IP/用户 10 分钟内最多 5 条
+  // 防刷：登录用户 5 条/10 分钟；匿名仅 3 条/10 分钟（抵御匿名灌水）
   const now = Date.now();
   const ip = clientIp(req);
+  const WINDOW = 10 * 60 * 1000;
+  const LIMIT = req.user ? 5 : 3;
   const recent = db.feedback.filter(
-    (f) => now - new Date(f.createdAt).getTime() < 10 * 60 * 1000 &&
+    (f) => now - new Date(f.createdAt).getTime() < WINDOW &&
       ((req.user && f.userId === req.user.id) || f.ip === ip),
   );
-  if (recent.length >= 5) {
-    return res.status(429).json({ error: '提交过于频繁，请 10 分钟后再试', code: 'FEEDBACK_RATE_LIMITED' });
+  if (recent.length >= LIMIT) {
+    return res.status(429).json({
+      error: `提交过于频繁，请 10 分钟后再试${req.user ? '' : '（登录后可提交更多）'}`,
+      code: 'FEEDBACK_RATE_LIMITED',
+    });
   }
 
   const images = req.files?.length ? req.files.map(fileRecord) : [];
