@@ -11,6 +11,8 @@ export type User = {
   status: 'active' | 'banned';
   bio: string;
   avatarHue: number;
+  avatarUrl?: string;
+  title?: string;
   createdAt: string;
   lastLoginAt: string | null;
   bindings: Record<string, { handle: string; boundAt: string; verified: boolean } | null>;
@@ -61,6 +63,28 @@ export type Claim = {
 };
 
 export type Role = 'user' | 'assessor' | 'admin';
+
+export type AvatarRequest = {
+  id: string;
+  userId: string;
+  imageUrl: string;
+  imageSha256: string;
+  imageMime: string;
+  imageSize: number;
+  status: 'pending' | 'approved' | 'rejected';
+  rejectReason: string;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  createdAt: string;
+  user?: {
+    id: string;
+    username: string;
+    nickname: string;
+    title: string;
+    avatarUrl: string;
+    avatarHue: number;
+  };
+};
 
 export type Notification = {
   id: string;

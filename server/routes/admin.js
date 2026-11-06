@@ -70,6 +70,7 @@ router.get('/stats', (req, res) => {
       rejected: claims.filter((c) => c.status === 'rejected').length,
       appeals: appeals.length,
       appealsPending: appeals.filter((a) => a.status === 'pending').length,
+    avatarsPending: (db.avatarRequests || []).filter((a) => a.status === 'pending').length,
       visits: logs.length,
       visits24h: logs.filter((l) => now - l.ts < day).length,
       passRate: claims.length ? Math.round((approvedClaims.length / claims.length) * 100) : 0,

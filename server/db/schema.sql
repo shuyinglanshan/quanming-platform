@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS users (
   deleted           INTEGER NOT NULL DEFAULT 0,
   bindings          TEXT DEFAULT '{}',
   binding_changes   TEXT DEFAULT '{}',
-  stats             TEXT DEFAULT '{}'
+  stats             TEXT DEFAULT '{}',
+  avatar_url        TEXT,
+  avatar_sha256     TEXT,
+  title             TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email    ON users(lower(email))    WHERE email IS NOT NULL AND deleted = 0;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone    ON users(phone)           WHERE phone IS NOT NULL AND deleted = 0;
@@ -301,3 +304,21 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+/* ============ 头像修改申请（需管理员审核） ============ */
+CREATE TABLE IF NOT EXISTS avatar_requests (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  image_url     TEXT NOT NULL,
+  image_sha256  TEXT NOT NULL,
+  image_mime    TEXT,
+  image_size    INTEGER,
+  status        TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','approved','rejected')),
+  reject_reason TEXT,
+  reviewed_by   TEXT,
+  reviewed_at   TEXT,
+  created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_avatar_requests_status ON avatar_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_avatar_requests_user ON avatar_requests(user_id);

@@ -17,6 +17,9 @@ import {
   Link2,
   RotateCcw,
   Save,
+  Award,
+  KeyRound,
+  Copy,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -77,6 +80,13 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
   const [bindTarget, setBindTarget] = useState<Row | null>(null);
   const [bindForm, setBindForm] = useState<Record<string, string>>({ qq: '', wechat: '', xiaohongshu: '' });
   const [bindSaving, setBindSaving] = useState(false);
+  const [titleTarget, setTitleTarget] = useState<Row | null>(null);
+  const [titleValue, setTitleValue] = useState('');
+  const [pwdTarget, setPwdTarget] = useState<Row | null>(null);
+  const [pwdMode, setPwdMode] = useState<'random' | 'manual'>('random');
+  const [pwdValue, setPwdValue] = useState('');
+  const [pwdResult, setPwdResult] = useState<{ username: string; password: string } | null>(null);
+  const [pwdBusy, setPwdBusy] = useState(false);
   const [roleValue, setRoleValue] = useState<Role>('user');
   const [selected, setSelected] = useState<string[]>([]);
   const [batchRole, setBatchRole] = useState<Role | null>(null);
@@ -377,6 +387,12 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
                   <DropdownMenuContent align="end" className="w-48">
                     <DropdownMenuItem onSelect={() => setDetail(u)}>
                       <UserCog /> 查看详情
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { setTitleTarget(u); setTitleValue(u.title || ''); }}>
+                      <Award /> 设置头衔
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => { setPwdTarget(u); setPwdMode('random'); setPwdValue(''); }}>
+                      <KeyRound /> 重置密码
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuLabel>调整权限组</DropdownMenuLabel>

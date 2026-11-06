@@ -16,6 +16,7 @@ import {
   Sparkles,
   UserRound,
   Users,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +29,7 @@ import { NamesPanel } from '@/components/admin/names-panel';
 import { NotificationsPanel } from '@/components/admin/notifications-panel';
 import { MailPanel } from '@/components/admin/mail-panel';
 import { SecurityPanel } from '@/components/admin/security-panel';
+import { AvatarsPanel } from '@/components/admin/avatars-panel';
 import { StatCard, TrendChart, type TrendPoint } from '@/components/admin/trend-chart';
 import { api, ApiError, type Claim, type Appeal } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -46,6 +48,7 @@ type Stats = {
     rejected: number;
     appeals: number;
     appealsPending: number;
+    avatarsPending: number;
     visits: number;
     visits24h: number;
     passRate: number;
@@ -76,6 +79,7 @@ const NAV: NavItem[] = [
   { key: 'overview', label: '数据概览', icon: LayoutDashboard, permission: 'dashboard' },
   { key: 'claims', label: '归属审核', icon: ShieldCheck, permission: 'review', badge: (s) => s?.cards.pending ?? 0 },
   { key: 'appeals', label: '归属申诉', icon: Gavel, permission: 'appeal', badge: (s) => s?.cards.appealsPending ?? 0 },
+  { key: 'avatars', label: '头像审核', icon: ImageIcon, permission: 'users', badge: (s) => s?.cards.avatarsPending ?? 0 },
   { key: 'users', label: '用户与权限', icon: Users, permission: 'users' },
   { key: 'names', label: '圈名管理', icon: Sparkles, permission: 'names' },
   { key: 'notifications', label: '通知发布', icon: Megaphone, permission: 'notify' },
@@ -112,6 +116,7 @@ export default function AdminPage() {
   const nav = NAV.filter((n) => !n.permission || can(n.permission));
   const pending = stats?.cards.pending ?? 0;
   const appealsPending = stats?.cards.appealsPending ?? 0;
+  const avatarsPending = stats?.cards.avatarsPending ?? 0;
   const roleMeta = ROLE_META[user?.role || 'user'];
 
   return (
@@ -126,8 +131,12 @@ export default function AdminPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-white">管理后台</h1>
             <span className={cn('rounded-full border px-2 py-0.5 text-[10.5px]', roleMeta.tone)}>{roleMeta.label}</span>
           </div>
-          <p className="mt-1 text-[12.5px] text-slate-500">
-            当前登录：{user?.nickname}（{user?.email}） · {roleMeta.desc}
+          <p className="mt-1 max-w-full text-[12.5px] leading-relaxed text-slate-500 line-clamp-2 sm:line-clamp-1">
+            <span className="break-all">
+              当前登录：{user?.nickname || user?.username}
+              {user?.email ? `（${user.email}）` : ''}
+            </span>
+            <span className="hidden sm:inline"> · {roleMeta.desc}</span>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -147,15 +156,24 @@ export default function AdminPage() {
               <Gavel className="size-3.5" /> {appealsPending} 条申诉待处理
             </button>
           )}
+          {avatarsPending > 0 && (
+            <button
+              onClick={() => setTab('avatars')}
+              className="flex items-center gap-1.5 rounded-xl border border-rose-300/25 bg-rose-400/10 px-3 py-2 text-[12px] text-rose-200 transition hover:bg-rose-400/15"
+            >
+              <ImageIcon className="size-3.5" /> {avatarsPending} 个头像待审核
+            </button>
+          )}
           <Button variant="secondary" size="sm" className="h-9" onClick={() => load(true)} disabled={refreshing}>
             <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} /> 刷新数据
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[200px_1fr]">
-        <aside className="glass h-fit rounded-2xl p-2 lg:sticky lg:top-20">
-          <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:overflow-visible">
+      <div className="grid gap-4 lg:grid-cols-[210px_1fr]">
+        <aside className="glass h-fit min-w-0 rounded-2xl p-2 lg:sticky lg:top-20">
+          {/* 移动端横向滚动不换行，标题过长时靠 overflow 滚动而非撑破布局 */}
+          <nav className="no-scrollbar flex gap-1 overflow-x-auto pb-0.5 lg:flex-col lg:overflow-visible lg:pb-0">
             {nav.map((n) => {
               const count = n.badge?.(stats) ?? 0;
               return (
@@ -163,16 +181,27 @@ export default function AdminPage() {
                   key={n.key}
                   onClick={() => setTab(n.key)}
                   className={cn(
-                    'flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] transition',
+                    'relative flex shrink-0 items-center gap-2 rounded-xl px-3 py-2.5 text-[13px] whitespace-nowrap transition',
                     tab === n.key
                       ? 'bg-gradient-to-r from-violet-500/25 to-indigo-500/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,.1)]'
                       : 'text-slate-400 hover:bg-white/[0.05] hover:text-slate-200',
                   )}
                 >
-                  <n.icon className="size-4" />
-                  {n.label}
+                  <span className="relative">
+                    <n.icon className="size-4" />
+                    {/* 未读红点：即使数量很多也直观可见 */}
+                    {count > 0 && (
+                      <span className="absolute -top-1 -right-1 flex size-2">
+                        <span className="absolute inline-flex size-full animate-ping rounded-full bg-rose-400 opacity-75" />
+                        <span className="relative inline-flex size-2 rounded-full bg-rose-500" />
+                      </span>
+                    )}
+                  </span>
+                  <span className="lg:flex-1 lg:text-left">{n.label}</span>
                   {count > 0 && (
-                    <span className="ml-auto rounded-full bg-amber-400/20 px-1.5 text-[10px] text-amber-200">{count}</span>
+                    <span className="ml-0.5 shrink-0 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] leading-none font-medium text-amber-200 tabular-nums lg:ml-auto">
+                      {count > 99 ? '99+' : count}
+                    </span>
                   )}
                 </button>
               );
@@ -200,6 +229,7 @@ export default function AdminPage() {
           {tab === 'overview' && <Overview stats={stats} loading={loading} onGoto={setTab} role={user?.role || 'user'} />}
           {tab === 'claims' && <ClaimsPanel onChanged={() => load(true)} />}
           {tab === 'appeals' && <AppealsPanel onChanged={() => load(true)} />}
+          {tab === 'avatars' && <AvatarsPanel onChanged={() => load(true)} />}
           {tab === 'users' && <UsersPanel onChanged={() => load(true)} currentUserId={user?.id} />}
           {tab === 'names' && <NamesPanel onChanged={() => load(true)} />}
           {tab === 'notifications' && <NotificationsPanel onChanged={() => load(true)} />}

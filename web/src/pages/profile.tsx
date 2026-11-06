@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -21,6 +21,11 @@ import {
   X,
   Repeat,
   Smartphone,
+  Camera,
+  ImageUp,
+  Award,
+  Clock3 as ClockIcon,
+  Trash2 as TrashIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,10 +38,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ClaimForm } from '@/components/claim-form';
 import { JoinGroupButton } from '@/components/join-group-button';
@@ -88,6 +94,17 @@ export default function ProfilePage() {
   const [phoneValue, setPhoneValue] = useState('');
   const [phonePassword, setPhonePassword] = useState('');
   const [pwdOpen, setPwdOpen] = useState(false);
+  const [avatarData, setAvatarData] = useState<{
+    avatarUrl: string;
+    title: string;
+    pending: number;
+    requests: { id: string; imageUrl: string; status: string; rejectReason: string; createdAt: string }[];
+  } | null>(null);
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState('');
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' });
 
   const load = useCallback(async () => {
@@ -108,6 +125,7 @@ export default function ProfilePage() {
 
   useEffect(() => {
     load();
+    api.get<any>('/me/avatar').then(setAvatarData).catch(() => {});
   }, [load]);
 
   // 从首页「提交圈名归属审核」跳转过来时，自动打开提交弹窗
@@ -221,19 +239,42 @@ export default function ProfilePage() {
           }}
         />
         <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center">
-          <Avatar className="size-16 ring-2 ring-white/10">
-            <AvatarFallback
-              className="text-xl"
-              style={{
-                background: `linear-gradient(135deg, hsl(${user.avatarHue} 72% 55%), hsl(${(user.avatarHue + 55) % 360} 76% 45%))`,
-              }}
+          <div className="relative shrink-0">
+            <Avatar className="size-16 ring-2 ring-white/10">
+              {avatarData?.avatarUrl || user.avatarUrl ? (
+                <AvatarImage src={avatarData?.avatarUrl || user.avatarUrl} alt={user.nickname} />
+              ) : null}
+              <AvatarFallback
+                className="text-xl"
+                style={{
+                  background: `linear-gradient(135deg, hsl(${user.avatarHue} 72% 55%), hsl(${(user.avatarHue + 55) % 360} 76% 45%))`,
+                }}
+              >
+                {initials(user.nickname)}
+              </AvatarFallback>
+            </Avatar>
+            <button
+              onClick={() => { setAvatarFile(null); setAvatarPreview(''); setAvatarOpen(true); }}
+              className="absolute -right-1 -bottom-1 grid size-6 place-items-center rounded-full border border-white/20 bg-[#17172a] text-slate-300 shadow transition hover:border-violet-300/50 hover:text-violet-200"
+              title="更换头像（需审核）"
             >
-              {initials(user.nickname)}
-            </AvatarFallback>
-          </Avatar>
+              <Camera className="size-3" />
+            </button>
+            {avatarData?.pending ? (
+              <span className="absolute -top-1 -left-1 flex size-3">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-400 opacity-70" />
+                <span className="relative inline-flex size-3 rounded-full bg-amber-500" />
+              </span>
+            ) : null}
+          </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight text-white">{user.nickname}</h1>
+              {(avatarData?.title || user.title) && (
+                <span className="flex items-center gap-1 rounded-full border border-amber-300/35 bg-gradient-to-r from-amber-400/20 to-orange-400/10 px-2 py-0.5 text-[10.5px] font-medium text-amber-200">
+                  <Award className="size-3" /> {avatarData?.title || user.title}
+                </span>
+              )}
               <span className={cn('rounded-full border px-2 py-0.5 text-[10.5px]', ROLE_META[user.role]?.tone || ROLE_META.user.tone)}>
                 {ROLE_META[user.role]?.label || '普通用户'}
               </span>
@@ -849,6 +890,95 @@ export default function ProfilePage() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* 头像上传（需审核） */}
+      <Dialog open={avatarOpen} onOpenChange={(o) => { if (!o) { setAvatarOpen(false); setAvatarFile(null); setAvatarPreview(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>更换头像</DialogTitle>
+            <DialogDescription>
+              提交后需管理员审核，通过后才会生效。支持 JPG / PNG / WEBP，建议正方形、2MB 以内。
+            </DialogDescription>
+          </DialogHeader>
+
+          {avatarData?.pending ? (
+            <div className="rounded-xl border border-amber-300/25 bg-amber-400/[0.08] p-3 text-[12px] leading-relaxed text-amber-200">
+              你已有一条头像申请正在审核中，请等待审核结果后再提交新的申请。
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div
+                onClick={() => avatarInputRef.current?.click()}
+                className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-6 transition hover:border-violet-300/40"
+              >
+                {avatarPreview ? (
+                  <img src={avatarPreview} alt="预览" className="size-24 rounded-full object-cover ring-2 ring-white/15" />
+                ) : (
+                  <div className="grid size-14 place-items-center rounded-full border border-white/10 bg-white/[0.05]">
+                    <ImageUp className="size-5 text-violet-200" />
+                  </div>
+                )}
+                <div className="text-[12.5px] text-slate-300">
+                  {avatarFile ? avatarFile.name : '点击选择图片'}
+                </div>
+                <div className="text-[10.5px] text-slate-500">
+                  {avatarFile ? `${(avatarFile.size / 1024).toFixed(0)} KB` : '最大 2MB · JPG / PNG / WEBP'}
+                </div>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!f) return;
+                    if (f.size > 2 * 1024 * 1024) return toast.error('头像不能超过 2MB');
+                    if (!['image/png', 'image/jpeg', 'image/webp'].includes(f.type)) {
+                      return toast.error('仅支持 JPG / PNG / WEBP');
+                    }
+                    setAvatarFile(f);
+                    setAvatarPreview(URL.createObjectURL(f));
+                  }}
+                />
+              </div>
+
+              <div className="flex items-start gap-2 rounded-xl border border-white/8 bg-white/[0.03] p-2.5 text-[10.5px] leading-relaxed text-slate-500">
+                <ShieldCheck className="mt-0.5 size-3 shrink-0 text-emerald-300/70" />
+                <span>图片会做格式校验、SHA-256 指纹记录与安全存储；审核通过前不会替换你的现有头像。</span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAvatarOpen(false)}>取消</Button>
+            <Button
+              disabled={avatarBusy || !avatarFile || Boolean(avatarData?.pending)}
+              onClick={async () => {
+                if (!avatarFile) return;
+                setAvatarBusy(true);
+                try {
+                  const form = new FormData();
+                  form.append('image', avatarFile);
+                  await api.post('/me/avatar', form);
+                  toast.success('头像申请已提交', { description: '管理员审核通过后即会生效' });
+                  setAvatarOpen(false);
+                  setAvatarFile(null);
+                  setAvatarPreview('');
+                  const fresh = await api.get<any>('/me/avatar');
+                  setAvatarData(fresh);
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '提交失败');
+                } finally {
+                  setAvatarBusy(false);
+                }
+              }}
+            >
+              {avatarBusy ? <Loader2 className="size-4 animate-spin" /> : <ImageUp className="size-4" />} 提交审核
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

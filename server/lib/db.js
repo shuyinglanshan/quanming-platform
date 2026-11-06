@@ -82,6 +82,7 @@ export const db = {
   codes: [],
   searches: [],
   captchas: [],
+  avatarRequests: [],
   security: {
     blockedIps: [],
     tempBlocks: [],
@@ -118,6 +119,10 @@ function loadAll() {
     .all()
     .map(repo.mapNotification);
   db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC LIMIT 2000').all().map(repo.mapLog);
+  db.avatarRequests = conn
+    .prepare('SELECT * FROM avatar_requests ORDER BY created_at DESC LIMIT 2000')
+    .all()
+    .map(repo.mapAvatarRequest);
   db.codes = conn.prepare('SELECT * FROM email_codes').all().map(repo.mapCode);
   db.captchas = conn.prepare('SELECT * FROM captchas').all().map(repo.mapCaptcha);
   db.searches = conn
@@ -224,7 +229,7 @@ const debounceTimers = new Map();
 const PERSIST_TABLES = [
   'users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas',
   'logs', 'searches', 'settings', 'blocked_ips', 'temp_blocks', 'security_events',
-  'register_attempts', 'login_attempts',
+  'register_attempts', 'login_attempts', 'avatar_requests',
 ];
 
 export function markDirty(table) {
@@ -274,6 +279,7 @@ export function persistTables(tables) {
     if (tables.has('notifications')) for (const n of db.notifications) repo.saveNotification(n);
     if (tables.has('codes')) repo.replaceCodes(db.codes);
     if (tables.has('captchas')) repo.replaceCaptchas(db.captchas);
+    if (tables.has('avatar_requests')) for (const a of db.avatarRequests) repo.saveAvatarRequest(a);
     if (tables.has('logs')) for (const l of db.logs) repo.saveLog(l);
     if (tables.has('searches')) repo.replaceSearches(db.searches);
     if (tables.has('settings')) for (const [k, v] of Object.entries(db.settings)) repo.saveSettings(k, v);
@@ -371,6 +377,8 @@ export function publicUser(u) {
     status: u.status,
     bio: u.bio || '',
     avatarHue: u.avatarHue ?? 260,
+    avatarUrl: u.avatarUrl || '',
+    title: u.title || '',
     createdAt: u.createdAt,
     lastLoginAt: u.lastLoginAt || null,
     bindings: u.bindings || {},

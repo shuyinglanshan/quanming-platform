@@ -17,7 +17,7 @@ import {
 const ALLOWED_FIELDS = new Set([
   'email', 'emailDomain', 'phone', 'username', 'nickname', 'passwordHash', 'role', 'status',
   'bio', 'avatarHue', 'banReason', 'lastLoginAt', 'lastIp', 'loginCount', 'deleted',
-  'bindings', 'bindingChanges', 'stats',
+  'bindings', 'bindingChanges', 'stats', 'avatarUrl', 'avatarSha256', 'title',
 ]);
 
 const FIELD_MAP = {
@@ -48,6 +48,8 @@ export function shapeUser(u) {
     status: u.status,
     bio: u.bio || '',
     avatarHue: u.avatarHue ?? 260,
+    avatarUrl: u.avatarUrl || '',
+    title: u.title || '',
     createdAt: u.createdAt,
     lastLoginAt: u.lastLoginAt || null,
     bindings: u.bindings || {},

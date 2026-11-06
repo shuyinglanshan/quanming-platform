@@ -6,6 +6,9 @@ import { validatePassword, sanitizeText, normalizePhone } from '../lib/util.js';
 import { hashPassword, verifyPassword, isSha256Hex } from '../lib/password.js';
 import { eventLog } from '../lib/logger.js';
 import { unreadCount } from '../lib/notify.js';
+import { uid } from '../lib/db.js';
+import { upload, chargeUploadQuota } from '../lib/upload.js';
+import { storeAvatar, shapeAvatarRequest, removeAvatarFile } from '../lib/avatar.js';
 import {
   findUserById,
   shapeUser,
@@ -141,6 +144,73 @@ router.post('/phone', (req, res) => {
   updateUser(u.id, { phone: target });
   eventLog(req, '修改手机号', `${u.username} → ${target}`);
   res.json({ user: shapeUser(findUserById(u.id)) });
+});
+
+/** ============ 头像 ============ */
+/** 我的头像状态：当前头像、自定义头衔、最近申请、待审数量 */
+router.get('/avatar', (req, res) => {
+  const u = findUserById(req.user.id);
+  const mine = db.avatarRequests
+    .filter((r) => r.userId === u.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json({
+    avatarUrl: u.avatarUrl || '',
+    title: u.title || '',
+    avatarSha256: u.avatarSha256 || '',
+    pending: mine.filter((r) => r.status === 'pending').length,
+    requests: mine.slice(0, 10).map((r) => shapeAvatarRequest(r)),
+  });
+});
+
+/** 提交头像修改申请：仅落库待审，不直接改用户头像 */
+router.post('/avatar', upload.array('image', 1), (req, res) => {
+  chargeUploadQuota(req);
+  const u = findUserById(req.user.id);
+  const file = req.files?.[0];
+  if (!file) return res.status(400).json({ error: '请选择要上传的头像图片' });
+
+  const pending = db.avatarRequests.find((r) => r.userId === u.id && r.status === 'pending');
+  if (pending) return res.status(409).json({ error: '已有头像申请正在审核中，请耐心等待结果' });
+
+  const stored = storeAvatar(file);
+  if (!stored.ok) return res.status(400).json({ error: stored.error });
+
+  if (u.avatarSha256 && u.avatarSha256 === stored.sha256) {
+    removeAvatarFile(stored.url);
+    return res.status(400).json({ error: '该图片与你当前头像相同，请更换一张' });
+  }
+
+  const record = {
+    id: uid('ar_'),
+    userId: u.id,
+    imageUrl: stored.url,
+    imageSha256: stored.sha256,
+    imageMime: stored.mime,
+    imageSize: stored.size,
+    status: 'pending',
+    rejectReason: '',
+    reviewedBy: null,
+    reviewedAt: null,
+    createdAt: new Date().toISOString(),
+  };
+  db.avatarRequests.unshift(record);
+  save('avatar_requests');
+
+  eventLog(req, '提交头像修改申请', `${u.username} · ${stored.sha256.slice(0, 12)}`);
+  res.status(201).json({ request: shapeAvatarRequest(record) });
+});
+
+/** 撤回自己待审的头像申请 */
+router.delete('/avatar/:id', (req, res) => {
+  const u = findUserById(req.user.id);
+  const target = db.avatarRequests.find((r) => r.id === req.params.id && r.userId === u.id);
+  if (!target) return res.status(404).json({ error: '申请不存在' });
+  if (target.status !== 'pending') return res.status(400).json({ error: '仅可撤回审核中的申请' });
+  db.avatarRequests = db.avatarRequests.filter((r) => r.id !== target.id);
+  save('avatar_requests');
+  removeAvatarFile(target.imageUrl);
+  eventLog(req, '撤回头像申请', u.username);
+  res.json({ ok: true });
 });
 
 /** 修改密码 */

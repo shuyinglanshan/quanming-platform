@@ -53,6 +53,9 @@ export function mapUser(row) {
     stats: J.parse(row.stats, { claims: 0, approved: 0, rejected: 0 }),
     banReason: row.ban_reason || '',
     deleted: Boolean(row.deleted),
+    avatarUrl: row.avatar_url || '',
+    avatarSha256: row.avatar_sha256 || '',
+    title: row.title || '',
   };
 }
 
@@ -78,6 +81,9 @@ export function toUserRow(u) {
     stats: J.stringify(u.stats, '{"claims":0,"approved":0,"rejected":0}'),
     ban_reason: u.banReason || null,
     deleted: bool(u.deleted),
+    avatar_url: u.avatarUrl || null,
+    avatar_sha256: u.avatarSha256 || null,
+    title: u.title || null,
   };
 }
 
@@ -86,16 +92,19 @@ export function saveUser(u) {
   getDb()
     .prepare(
       `INSERT INTO users (id,email,email_domain,phone,username,nickname,password_hash,role,status,bio,
-        avatar_hue,created_at,last_login_at,login_count,last_ip,bindings,binding_changes,stats,ban_reason,deleted)
+        avatar_hue,created_at,last_login_at,login_count,last_ip,bindings,binding_changes,stats,ban_reason,deleted,
+        avatar_url,avatar_sha256,title)
        VALUES (@id,@email,@email_domain,@phone,@username,@nickname,@password_hash,@role,@status,@bio,
-        @avatar_hue,@created_at,@last_login_at,@login_count,@last_ip,@bindings,@binding_changes,@stats,@ban_reason,@deleted)
+        @avatar_hue,@created_at,@last_login_at,@login_count,@last_ip,@bindings,@binding_changes,@stats,@ban_reason,@deleted,
+        @avatar_url,@avatar_sha256,@title)
        ON CONFLICT(id) DO UPDATE SET
         email=excluded.email, email_domain=excluded.email_domain, phone=excluded.phone,
         username=excluded.username, nickname=excluded.nickname, password_hash=excluded.password_hash,
         role=excluded.role, status=excluded.status, bio=excluded.bio, avatar_hue=excluded.avatar_hue,
         last_login_at=excluded.last_login_at, login_count=excluded.login_count, last_ip=excluded.last_ip,
         bindings=excluded.bindings, binding_changes=excluded.binding_changes, stats=excluded.stats,
-        ban_reason=excluded.ban_reason, deleted=excluded.deleted`,
+        ban_reason=excluded.ban_reason, deleted=excluded.deleted,
+        avatar_url=excluded.avatar_url, avatar_sha256=excluded.avatar_sha256, title=excluded.title`,
     )
     .run(r);
 }
@@ -671,4 +680,51 @@ function safeParse(text, fallback) {
   } catch {
     return fallback;
   }
+}
+
+
+/* ================= avatar_requests ================= */
+export function mapAvatarRequest(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    imageUrl: row.image_url,
+    imageSha256: row.image_sha256,
+    imageMime: row.image_mime || '',
+    imageSize: int(row.image_size),
+    status: row.status,
+    rejectReason: row.reject_reason || '',
+    reviewedBy: row.reviewed_by || null,
+    reviewedAt: row.reviewed_at || null,
+    createdAt: row.created_at,
+  };
+}
+
+export function saveAvatarRequest(r) {
+  getDb()
+    .prepare(
+      `INSERT INTO avatar_requests (id,user_id,image_url,image_sha256,image_mime,image_size,status,reject_reason,reviewed_by,reviewed_at,created_at)
+       VALUES (@id,@user_id,@image_url,@image_sha256,@image_mime,@image_size,@status,@reject_reason,@reviewed_by,@reviewed_at,@created_at)
+       ON CONFLICT(id) DO UPDATE SET
+        status=excluded.status, reject_reason=excluded.reject_reason,
+        reviewed_by=excluded.reviewed_by, reviewed_at=excluded.reviewed_at`,
+    )
+    .run({
+      id: r.id,
+      user_id: r.userId,
+      image_url: r.imageUrl,
+      image_sha256: r.imageSha256,
+      image_mime: r.imageMime || '',
+      image_size: int(r.imageSize),
+      status: r.status,
+      reject_reason: r.rejectReason || null,
+      reviewed_by: r.reviewedBy || null,
+      reviewed_at: r.reviewedAt || null,
+      created_at: r.createdAt,
+    });
+}
+
+export function deleteAvatarRequest(id) {
+  getDb().prepare('DELETE FROM avatar_requests WHERE id=?').run(id);
 }

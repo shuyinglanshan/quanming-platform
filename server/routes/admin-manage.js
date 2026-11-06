@@ -5,9 +5,30 @@ import { paginate, sanitizeText } from '../lib/util.js';
 import { shapeName } from './names.js';
 import { eventLog } from '../lib/logger.js';
 import { notifyUser } from '../lib/notify.js';
+import { shapeAvatarRequest, removeAvatarFile } from '../lib/avatar.js';
+import { updateUser } from '../lib/repo-user.js';
+import { hashPassword } from '../lib/password.js';
+import crypto from 'node:crypto';
 import { deleteName } from '../lib/repo.js';
 
 const router = express.Router();
+
+/** 生成 12 位强随机密码（大小写+数字+符号） */
+function randomPassword(len = 12) {
+  const U = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const L = 'abcdefghijkmnopqrstuvwxyz';
+  const D = '23456789';
+  const S = '!@#$%^&*';
+  const all = U + L + D + S;
+  const pick = (c) => c[crypto.randomInt(0, c.length)];
+  const chars = [pick(U), pick(L), pick(D), pick(S)];
+  while (chars.length < len) chars.push(pick(all));
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
 
 /** 社交平台账号规则（与个人中心保持一致） */
 const PLATFORM_RULES = {
@@ -224,6 +245,151 @@ router.post('/users/:id/bindings/reset-quota', requirePermission('users'), (req,
     link: '/me?tab=bindings',
   });
   res.json({ user: publicUser(user) });
+});
+
+/* ============ 头像审核 ============ */
+router.get('/avatars', requirePermission('users'), (req, res) => {
+  const { status = 'pending', q = '', page = 1, pageSize = 10 } = req.query;
+  const keyword = String(q).trim().toLowerCase();
+  let list = [...db.avatarRequests];
+  if (status !== 'all') list = list.filter((a) => a.status === status);
+  if (keyword) {
+    list = list.filter((a) => {
+      const u = findUserById(a.userId);
+      return (
+        (u?.username || '').toLowerCase().includes(keyword) ||
+        (u?.nickname || '').toLowerCase().includes(keyword) ||
+        (u?.email || '').toLowerCase().includes(keyword)
+      );
+    });
+  }
+  const order = { pending: 0, approved: 1, rejected: 2 };
+  list.sort((a, b) => (order[a.status] - order[b.status]) || (new Date(b.createdAt) - new Date(a.createdAt)));
+
+  const result = paginate(list, page, pageSize);
+  res.json({
+    ...result,
+    items: result.items.map((a) => shapeAvatarRequest(a, findUserById(a.userId))),
+    counts: {
+      all: db.avatarRequests.length,
+      pending: db.avatarRequests.filter((a) => a.status === 'pending').length,
+      approved: db.avatarRequests.filter((a) => a.status === 'approved').length,
+      rejected: db.avatarRequests.filter((a) => a.status === 'rejected').length,
+    },
+  });
+});
+
+router.post('/avatars/:id/approve', requirePermission('users'), (req, res) => {
+  const record = db.avatarRequests.find((a) => a.id === req.params.id);
+  if (!record) return res.status(404).json({ error: '申请不存在' });
+  if (record.status !== 'pending') return res.status(400).json({ error: '该申请已处理' });
+
+  const u = findUserById(record.userId);
+  if (!u) return res.status(404).json({ error: '申请用户不存在' });
+
+  const oldUrl = u.avatarUrl;
+  updateUser(u.id, { avatarUrl: record.imageUrl, avatarSha256: record.imageSha256 });
+
+  record.status = 'approved';
+  record.reviewedBy = req.user.id;
+  record.reviewedAt = new Date().toISOString();
+  save('avatar_requests');
+
+  // 旧头像不在被任何申请引用时删除，避免磁盘堆积
+  if (oldUrl && !db.avatarRequests.some((a) => a.imageUrl === oldUrl)) removeAvatarFile(oldUrl);
+
+  notifyUser(u.id, {
+    category: 'system',
+    level: 'success',
+    title: '头像修改申请已通过',
+    content: '你提交的头像已通过审核并生效，可在个人中心查看。',
+    link: '/me',
+  });
+  eventLog(req, '通过头像申请', `${u.username}`);
+  res.json({ ok: true, avatarUrl: record.imageUrl });
+});
+
+router.post('/avatars/:id/reject', requirePermission('users'), (req, res) => {
+  const record = db.avatarRequests.find((a) => a.id === req.params.id);
+  if (!record) return res.status(404).json({ error: '申请不存在' });
+  if (record.status !== 'pending') return res.status(400).json({ error: '该申请已处理' });
+
+  const reason = sanitizeText(req.body?.reason, 200);
+  if (!reason || reason.length < 2) return res.status(400).json({ error: '请填写驳回理由（至少 2 个字）' });
+
+  record.status = 'rejected';
+  record.rejectReason = reason;
+  record.reviewedBy = req.user.id;
+  record.reviewedAt = new Date().toISOString();
+  save('avatar_requests');
+
+  const u = findUserById(record.userId);
+  if (u) {
+    notifyUser(u.id, {
+      category: 'system',
+      level: 'warning',
+      title: '头像修改申请被驳回',
+      content: `驳回理由：${reason}`,
+      link: '/me',
+    });
+    eventLog(req, '驳回头像申请', `${u.username} · ${reason.slice(0, 30)}`);
+  }
+  res.json({ ok: true });
+});
+
+/* ============ 重置用户密码 ============ */
+router.post('/users/:id/reset-password', requirePermission('users'), (req, res) => {
+  const u = findUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+  if (u.id === req.user.id) return res.status(400).json({ error: '不能在此重置自己的密码，请到个人中心修改' });
+
+  const mode = String(req.body?.mode || 'random');
+  let plain;
+  if (mode === 'manual') {
+    plain = String(req.body?.password || '');
+    const err = validatePassword(plain);
+    if (err) return res.status(400).json({ error: err });
+  } else {
+    plain = randomPassword();
+  }
+
+  updateUser(u.id, { passwordHash: hashPassword(plain) });
+  // 失效该用户全部会话，强制重新登录
+  db.sessions = db.sessions.filter((s) => s.userId !== u.id);
+  save('sessions');
+
+  notifyUser(u.id, {
+    category: 'system',
+    level: 'warning',
+    title: '登录密码已被管理员重置',
+    content: '你的账号密码已由管理员重置，请使用新密码登录，并尽快在个人中心自行修改。',
+    link: '/login',
+  });
+  eventLog(req, '重置用户密码', u.username);
+
+  // 明文仅在本次响应返回一次，不入库、不进日志
+  res.json({ ok: true, password: plain, username: u.username });
+});
+
+/* ============ 自定义头衔 ============ */
+router.post('/users/:id/title', requirePermission('users'), (req, res) => {
+  const u = findUserById(req.params.id);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+
+  const raw = req.body?.title;
+  const title = raw === null || raw === '' ? '' : sanitizeText(raw, 20);
+  if (title && [...title].length > 20) return res.status(400).json({ error: '头衔最多 20 个字符' });
+
+  updateUser(u.id, { title });
+  notifyUser(u.id, {
+    category: 'system',
+    level: 'info',
+    title: title ? '你获得了新的头衔' : '你的头衔已被移除',
+    content: title ? `管理员为你设置了头衔「${title}」，将展示在个人中心与圈名详情页。` : '管理员移除了你的自定义头衔。',
+    link: '/me',
+  });
+  eventLog(req, title ? '设置用户头衔' : '清除用户头衔', `${u.username} · ${title || '（空）'}`);
+  res.json({ ok: true, title });
 });
 
 router.delete('/users/:id', requirePermission('users'), (req, res) => {

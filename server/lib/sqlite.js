@@ -52,6 +52,12 @@ export function getDb() {
   const columns = db.prepare('PRAGMA table_info(access_logs)').all().map((c) => c.name);
   if (!columns.includes('v')) db.exec('ALTER TABLE access_logs ADD COLUMN v INTEGER DEFAULT 1');
 
+  // 用户在旧库上补齐头像与头衔字段
+  const userCols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!userCols.includes('avatar_url')) db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
+  if (!userCols.includes('avatar_sha256')) db.exec('ALTER TABLE users ADD COLUMN avatar_sha256 TEXT');
+  if (!userCols.includes('title')) db.exec('ALTER TABLE users ADD COLUMN title TEXT');
+
   instance = db;
   if (isNew) {
     console.log(`[db] 已初始化数据库: ${path.relative(ROOT, DB_PATH)}`);
