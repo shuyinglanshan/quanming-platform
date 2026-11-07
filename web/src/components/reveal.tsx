@@ -46,8 +46,12 @@ export function Reveal({
     <Tag
       ref={ref as never}
       className={cn(
-        'transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[opacity,transform]',
-        shown ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0',
+        'transition-[opacity,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]',
+        // 仅在动画进行中启用 will-change；结束后清除，避免永久创建层叠上下文
+        // （层叠上下文会把内部绝对定位弹层的 z-index 限制在容器内，
+        //   导致搜索建议被下方按钮遮挡）
+        shown ? 'opacity-100 will-change-auto' : 'translate-y-3 opacity-0 will-change-[opacity,transform]',
+        // 动画结束后彻底移除 transform，恢复正常文档流与层叠关系
         className
       )}
       style={{ transitionDelay: `${delay}ms` }}

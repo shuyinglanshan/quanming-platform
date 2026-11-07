@@ -74,11 +74,21 @@
 
 /* 可读性修正：深色背景下 slate-500/600 对比度过低，统一提亮 */
 @layer utilities {
+  /* 深色背景下统一提亮，保证次要信息清晰可读 */
   .text-slate-600 {
-    color: rgb(148 163 184 / 0.82); /* 接近 slate-400 */
+    color: rgb(165 180 200 / 0.88); /* 明显亮于原生 slate-600 */
   }
   .text-slate-500 {
-    color: rgb(148 163 184 / 0.95);
+    color: rgb(176 190 209 / 0.96);
+  }
+  /* 极小字号在移动端更难辨认，略微提亮一级 */
+  @media (max-width: 640px) {
+    .text-slate-600 {
+      color: rgb(178 192 210 / 0.92);
+    }
+    .text-slate-500 {
+      color: rgb(188 200 216 / 0.98);
+    }
   }
 }
 
@@ -224,10 +234,29 @@
 }
 
 @utility text-gradient {
+  /* 兜底：不支持 background-clip:text 时用高对比纯色，避免文字变灰看不清 */
+  color: #f1f0ff;
   background: linear-gradient(100deg, #ffffff 8%, #c4b5fd 46%, #67e8f9 92%);
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 仅在确定支持该特性时才使用透明文字，否则保留纯色 */
+@supports (-webkit-background-clip: text) or (background-clip: text) {
+  .text-gradient {
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+/* 移动端 WebView 对 background-clip:text 支持不稳定，统一回退纯色 */
+@media (max-width: 640px) {
+  .text-gradient {
+    color: #f5f3ff;
+    -webkit-text-fill-color: #f5f3ff;
+    background: none;
+  }
 }
 
 @utility hairline {

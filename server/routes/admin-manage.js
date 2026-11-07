@@ -548,10 +548,25 @@ router.delete('/names/:id', requirePermission('names'), (req, res) => {
 });
 
 /* ============ 访问日志 ============ */
+/**
+ * 访问日志列表
+ *
+ * 注意：查询日志本身也会产生访问日志。若把这类记录计入统计，
+ * 每次翻页/查看详情都会让「全部记录」「异常请求」等数字变化，
+ * 造成「点击其他记录时数量减少」的错觉。
+ * 因此统计与列表都排除日志面板自身产生的请求。
+ */
+const SELF_PATHS = [/^\/api\/admin\/logs/, /^\/api\/admin\/stats/, /^\/api\/admin\/security/];
+const isSelfRequest = (l) => SELF_PATHS.some((re) => re.test(l.path || ''));
+
 router.get('/logs', requirePermission('logs'), (req, res) => {
   const { q = '', level = 'all', page = 1, pageSize = 20 } = req.query;
   const keyword = String(q).trim().toLowerCase();
-  let list = [...db.logs];
+
+  // 统计基准：排除后台自身轮询/查询产生的噪声
+  const base = db.logs.filter((l) => !isSelfRequest(l));
+
+  let list = [...base];
   if (level === 'error') list = list.filter((l) => l.status >= 400 || l.level === 'error');
   if (level === 'auth') list = list.filter((l) => /登录|注册|验证码|退出/.test(l.action));
   if (level === 'review') list = list.filter((l) => /审核|驳回|通过|申诉|圈名/.test(l.action));
@@ -587,11 +602,11 @@ router.get('/logs', requirePermission('logs'), (req, res) => {
     ...result,
     items: result.items.map(decorate),
     counts: {
-      all: db.logs.length,
-      error: db.logs.filter((l) => l.status >= 400 || l.level === 'error').length,
-      auth: db.logs.filter((l) => /登录|注册|验证码|退出/.test(l.action)).length,
-      review: db.logs.filter((l) => /审核|驳回|通过|申诉|圈名/.test(l.action)).length,
-      security: db.logs.filter((l) => /限制|拉黑|封禁|频繁/.test(l.action)).length,
+      all: base.length,
+      error: base.filter((l) => l.status >= 400 || l.level === 'error').length,
+      auth: base.filter((l) => /登录|注册|验证码|退出/.test(l.action)).length,
+      review: base.filter((l) => /审核|驳回|通过|申诉|圈名/.test(l.action)).length,
+      security: base.filter((l) => /限制|拉黑|封禁|频繁/.test(l.action)).length,
     },
   });
 });
@@ -617,7 +632,7 @@ router.get('/logs/:id', requirePermission('logs'), (req, res) => {
   }));
 
   const sameIpStats = (() => {
-    const all = db.logs.filter((l) => l.ip === log.ip);
+    const all = db.logs.filter((l) => l.ip === log.ip && !isSelfRequest(l));
     const last1h = all.filter((l) => Date.now() - l.ts < 3600_000);
     return {
       total: all.length,
@@ -660,7 +675,7 @@ router.get('/ip/:ip/profile', requirePermission('logs'), (req, res) => {
   const perm = isPermanentlyBlocked(ip);
   const temp = activeTempBlock(ip);
 
-  const logs = db.logs.filter((l) => l.ip === ip);
+  const logs = db.logs.filter((l) => l.ip === ip && !isSelfRequest(l));
   const recent = logs.slice(0, 30).map((l) => ({
     id: l.id, ts: l.ts, method: l.method, path: l.path, status: l.status, ms: l.ms, action: l.action,
   }));

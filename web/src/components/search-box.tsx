@@ -133,7 +133,7 @@ export function SearchBox({
       </div>
 
       {open && items.length > 0 && (
-        <div className="absolute top-[calc(100%+8px)] right-0 left-0 z-30 overflow-hidden rounded-2xl border border-white/12 bg-[#0b0b14] p-1.5 text-left shadow-[0_30px_70px_-30px_rgba(0,0,0,1)] animate-rise">
+        <div className="absolute top-[calc(100%+8px)] right-0 left-0 z-50 overflow-hidden rounded-2xl border border-white/12 bg-[#0b0b14] p-1.5 text-left shadow-[0_30px_70px_-30px_rgba(0,0,0,1)] animate-rise">
           <div className="px-2.5 py-1.5 text-[10.5px] tracking-[0.16em] text-slate-500 uppercase">匹配的圈名</div>
           {items.map((item, i) => (
             <button
