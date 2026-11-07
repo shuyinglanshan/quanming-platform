@@ -129,7 +129,8 @@ router.get('/stats', (req, res) => {
         ) || 0,
       passRate: claims.length ? Math.round((approvedClaims.length / claims.length) * 100) : 0,
       avgReviewHours: avgReview,
-      searches: db.searches.length,
+      // 搜索次数直读数据库（内存只缓存最近 2000 条）
+      searches: Number(conn.prepare('SELECT COUNT(*) c FROM searches').get().c) || 0,
       myReviewed: mine(claims) + mine(appeals),
       blockedIps: (db.security?.blockedIps || []).length,
       tempBlocked: (db.security?.tempBlocks || []).filter((b) => b.until > now).length,

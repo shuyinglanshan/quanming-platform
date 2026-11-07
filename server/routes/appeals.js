@@ -43,6 +43,7 @@ export function shapeAppeal(a, { withUser = false } = {}) {
           id: user.id,
           email: user.email,
           nickname: user.nickname,
+          avatarUrl: user.avatarUrl || '',
           avatarHue: user.avatarHue,
           createdAt: user.createdAt,
         }

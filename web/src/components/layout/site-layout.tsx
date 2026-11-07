@@ -29,7 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/user-avatar';
 import { useAuth } from '@/lib/auth';
 import { cn, initials, ROLE_META } from '@/lib/utils';
 import { DEVELOPER, SITE_NAME } from '@/lib/site';
@@ -106,16 +106,7 @@ export default function SiteLayout() {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] py-1 pr-2 pl-1 transition hover:bg-white/[0.09]">
-                      <Avatar className="size-8">
-                        <AvatarFallback
-                          className="text-xs"
-                          style={{
-                            background: `linear-gradient(135deg, hsl(${user.avatarHue} 70% 55%), hsl(${(user.avatarHue + 50) % 360} 75% 45%))`,
-                          }}
-                        >
-                          {initials(user.nickname)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <UserAvatar className="size-8" name={user.nickname} url={user.avatarUrl} hue={user.avatarHue} />
                       <span className="hidden max-w-24 truncate text-[13px] text-slate-200 sm:block">{user.nickname}</span>
                       <ChevronDown className="size-3.5 text-slate-500" />
                     </button>

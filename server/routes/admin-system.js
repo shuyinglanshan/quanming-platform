@@ -45,7 +45,8 @@ router.get('/system', requireAdmin, (req, res) => {
       claims: db.claims.length,
       appeals: db.appeals.length,
       notifications: db.notifications.length,
-      logs: db.logs.length,
+      // 日志量直读数据库（内存只加载最近 2000 条）
+      logs: Number(getDb().prepare('SELECT COUNT(*) c FROM access_logs').get().c) || 0,
       sessions: db.sessions.length,
     },
     storage: { db: 'server/data/db.json', uploads: 'server/uploads' },

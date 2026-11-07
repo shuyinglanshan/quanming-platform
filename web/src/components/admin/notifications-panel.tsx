@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/user-avatar';
 import {
   Dialog,
   DialogContent,
@@ -325,11 +325,7 @@ export function NotificationsPanel({ onChanged }: { onChanged?: () => void }) {
                           active ? 'bg-violet-400/12' : 'hover:bg-white/[0.06]',
                         )}
                       >
-                        <Avatar className="size-6">
-                          <AvatarFallback className="text-[10px]" style={{ background: `hsl(${r.avatarHue} 65% 45%)` }}>
-                            {initials(r.nickname)}
-                          </AvatarFallback>
-                        </Avatar>
+                        <UserAvatar className="size-6" name={r.nickname} url={(r as any).avatarUrl} hue={r.avatarHue} />
                         <span className="truncate text-[12px] text-slate-200">{r.nickname}</span>
                         <span className="ml-auto truncate text-[10.5px] text-slate-500">{r.email}</span>
                       </button>

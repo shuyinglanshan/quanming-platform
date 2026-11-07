@@ -1,8 +1,12 @@
 import express from 'express';
-import { db, saveDebounced } from '../lib/db.js';
+import { db } from '../lib/db.js';
+import { insertSearch, incrementNameViews, pruneSearches } from '../lib/repo.js';
 import { paginate } from '../lib/util.js';
 
 const router = express.Router();
+
+/** 搜索写入计数，用于周期性清理旧记录 */
+let searchWriteCount = 0;
 
 export function shapeName(n, { withEvidence = false } = {}) {
   const owner = db.users.find((u) => u.id === n.ownerId);
@@ -31,6 +35,8 @@ export function shapeName(n, { withEvidence = false } = {}) {
           id: owner.id,
           nickname: owner.nickname,
           avatarHue: owner.avatarHue,
+          // 头像地址必须返回，否则前端只能显示首字母占位
+          avatarUrl: owner.avatarUrl || '',
           bindings: {
             qq: Boolean(owner.bindings?.qq),
             wechat: Boolean(owner.bindings?.wechat),
@@ -66,14 +72,20 @@ router.post('/search-log', (req, res) => {
     .slice(0, 60);
   // 忽略空白词与纯符号，避免污染热词统计
   if (q && /[\p{L}\p{N}]/u.test(q)) {
-    db.searches.unshift({
+    const record = {
       q,
       ts: Date.now(),
       userId: req.user?.id || null,
       hit: Boolean(req.body?.hit),
-    });
+    };
+    // 内存缓存（供列表展示）
+    db.searches.unshift(record);
     if (db.searches.length > 2000) db.searches.length = 2000;
-    saveDebounced('searches');
+    // 立即落库：后台热词是直接查库的，延迟写会导致「热词不更新」
+    insertSearch(record);
+    // 轻度清理，避免表无限增长（每 200 次触发一次）
+    searchWriteCount += 1;
+    if (searchWriteCount % 200 === 0) pruneSearches(5000);
   }
   res.json({ ok: true });
 });
@@ -136,8 +148,8 @@ router.get('/:id', (req, res) => {
   const name = db.names.find((n) => n.id === req.params.id || n.name === req.params.id);
   if (!name || name.status === 'hidden') return res.status(404).json({ error: '该圈名不存在或已下架' });
   name.views = (name.views || 0) + 1;
-  // 浏览计数属于高频可容忍延迟写入，合并 3 秒落库，避免每个请求重写整张 names 表
-  saveDebounced('names');
+  // 单条 UPDATE 立即生效，避免全表重写与延迟导致列表/热门榜数据不同步
+  incrementNameViews(name.id);
   res.json({ name: shapeName(name, { withEvidence: true }) });
 });
 

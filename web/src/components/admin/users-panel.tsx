@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/user-avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -88,6 +88,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
   const [pwdTarget, setPwdTarget] = useState<Row | null>(null);
   const [pwdMode, setPwdMode] = useState<'random' | 'manual'>('random');
   const [pwdValue, setPwdValue] = useState('');
+  const [resetResult, setResetResult] = useState<{ username: string; password: string } | null>(null);
   const [pwdResult, setPwdResult] = useState<{ username: string; password: string } | null>(null);
   const [pwdBusy, setPwdBusy] = useState(false);
   const [roleValue, setRoleValue] = useState<Role>('user');
@@ -335,14 +336,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
                     setSelected((prev) => (v ? [...prev, u.id] : prev.filter((id) => id !== u.id)))
                   }
                 />
-                <Avatar className="size-9">
-                  <AvatarFallback
-                    className="text-[12px]"
-                    style={{ background: `linear-gradient(135deg, hsl(${u.avatarHue} 70% 55%), hsl(${(u.avatarHue + 50) % 360} 75% 45%))` }}
-                  >
-                    {initials(u.nickname)}
-                  </AvatarFallback>
-                </Avatar>
+                <UserAvatar className="size-9" name={u.nickname} url={u.avatarUrl} hue={u.avatarHue} />
 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -689,6 +683,127 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
       </Dialog>
 
       {/* 删除 */}
+      {/* 重置指定用户密码 */}
+      <Dialog open={!!pwdTarget} onOpenChange={(o) => !o && setPwdTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="size-4 text-amber-300" /> 重置密码
+            </DialogTitle>
+            <DialogDescription>
+              为「{pwdTarget?.nickname}」设置新密码。重置后该用户所有登录会话将立即失效，需用新密码重新登录。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { key: 'random' as const, label: '随机生成', desc: '自动生成强密码' },
+                { key: 'manual' as const, label: '手动指定', desc: '自行输入新密码' },
+              ].map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => setPwdMode(m.key)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2 text-left transition',
+                    pwdMode === m.key
+                      ? 'border-violet-300/45 bg-violet-400/12'
+                      : 'border-white/10 bg-white/[0.03] hover:border-white/20',
+                  )}
+                >
+                  <div className="text-[12px] font-medium text-white">{m.label}</div>
+                  <div className="mt-0.5 text-[10.5px] text-slate-500">{m.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            {pwdMode === 'manual' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="new-pwd">新密码</Label>
+                <Input
+                  id="new-pwd"
+                  type="text"
+                  value={pwdValue}
+                  onChange={(e) => setPwdValue(e.target.value.slice(0, 64))}
+                  placeholder="至少 8 位，需包含字母与数字"
+                />
+              </div>
+            )}
+
+            <div className="rounded-xl border border-amber-300/20 bg-amber-400/[0.06] px-3 py-2.5 text-[11px] leading-relaxed text-amber-200/90">
+              新密码仅在此处显示一次，请立即复制并通过安全渠道告知用户。
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPwdTarget(null)}>取消</Button>
+            <Button
+              onClick={async () => {
+                if (!pwdTarget) return;
+                if (pwdMode === 'manual' && pwdValue.trim().length < 8) {
+                  toast.error('新密码至少 8 位');
+                  return;
+                }
+                try {
+                  const body: any = { mode: pwdMode };
+                  if (pwdMode === 'manual') body.password = pwdValue.trim();
+                  const r = await api.post<{ password: string; username: string }>(
+                    `/admin/users/${pwdTarget.id}/reset-password`,
+                    body,
+                  );
+                  setPwdTarget(null);
+                  setPwdValue('');
+                  // 用弹窗展示新密码，避免 toast 一闪而过不好复制
+                  setResetResult({ username: r.username || pwdTarget.username, password: r.password });
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '重置失败');
+                }
+              }}
+            >
+              <KeyRound className="size-4" /> 确认重置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 重置结果（明文仅显示一次） */}
+      <Dialog open={!!resetResult} onOpenChange={(o) => !o && setResetResult(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="size-4 text-emerald-300" /> 密码已重置
+            </DialogTitle>
+            <DialogDescription>请立即复制并转告用户，关闭后将无法再次查看。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <div className="rounded-xl border border-white/8 bg-white/[0.04] p-3">
+              <div className="text-[10.5px] text-slate-500">账号</div>
+              <div className="break-all font-mono text-[13px] text-white">{resetResult?.username}</div>
+            </div>
+            <div className="rounded-xl border border-emerald-300/25 bg-emerald-400/[0.08] p-3">
+              <div className="text-[10.5px] text-emerald-300/70">新密码</div>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="break-all font-mono text-[13px] text-emerald-100">{resetResult?.password}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="ml-auto shrink-0"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(resetResult?.password || '');
+                    toast.success('已复制');
+                  }}
+                >
+                  <Copy className="size-3.5" /> 复制
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setResetResult(null)}>我知道了</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!delTarget} onOpenChange={(o) => !o && setDelTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>

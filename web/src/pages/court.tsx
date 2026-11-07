@@ -11,7 +11,7 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/user-avatar';
 import { Pager } from '@/components/admin/pager';
 import { useAuth } from '@/lib/auth';
 import { api, ApiError, type Court, type PageResult } from '@/lib/api';
@@ -303,11 +303,7 @@ export function CourtDetailPage() {
               )}
             >
               <div className="flex items-center gap-2">
-                <Avatar className="size-8">
-                  <AvatarFallback style={{ background: `linear-gradient(135deg, hsl(${p.person?.avatarHue ?? 260} 70% 55%), hsl(${((p.person?.avatarHue ?? 260) + 50) % 360} 75% 45%))` }}>
-                    {initials(p.person?.nickname || '?')}
-                  </AvatarFallback>
-                </Avatar>
+                <UserAvatar className="size-8" name={p.person?.nickname || '?'} url={p.person?.avatarUrl} hue={p.person?.avatarHue} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
                     <span className={cn('text-[10.5px]', p.side === 'claimant' ? 'text-violet-300' : 'text-sky-300')}>{p.label}</span>

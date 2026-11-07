@@ -935,3 +935,32 @@ export function saveNameBan(b) {
       created_at: b.createdAt,
     });
 }
+
+/* ================= 增量写入（避免全表重写） ================= */
+
+/**
+ * 插入一条搜索记录
+ * 单条 INSERT 立即可查，避免 saveDebounced 延迟导致
+ * 后台热词查询读不到最新数据。
+ */
+export function insertSearch(s) {
+  getDb()
+    .prepare('INSERT INTO searches (q,ts,user_id,hit) VALUES (?,?,?,?)')
+    .run(s.q, s.ts, s.userId || null, bool(s.hit));
+}
+
+/** 浏览量自增（单条 UPDATE，避免重写整张 names 表） */
+export function incrementNameViews(id) {
+  getDb().prepare('UPDATE names SET views = COALESCE(views,0) + 1 WHERE id = ?').run(id);
+}
+
+/** 清理过期搜索记录，只保留最近 N 条，控制表体积 */
+export function pruneSearches(keep = 5000) {
+  getDb()
+    .prepare(
+      `DELETE FROM searches WHERE id NOT IN (
+         SELECT id FROM searches ORDER BY ts DESC LIMIT ?
+       )`,
+    )
+    .run(keep);
+}

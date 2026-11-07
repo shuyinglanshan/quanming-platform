@@ -24,7 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { UserAvatar } from '@/components/user-avatar';
 import { AppealForm } from '@/components/appeal-form';
 import { JoinGroupButton } from '@/components/join-group-button';
 import { api, ApiError, type NameItem } from '@/lib/api';
@@ -142,13 +142,7 @@ export default function NameDetailPage() {
 
         {/* 归属者 */}
         <div className="relative mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.035] p-4">
-          <Avatar className="size-10">
-            <AvatarFallback
-              style={{ background: `linear-gradient(135deg, hsl(${hue} 70% 55%), hsl(${(hue + 50) % 360} 75% 45%))` }}
-            >
-              {initials(data.owner?.nickname)}
-            </AvatarFallback>
-          </Avatar>
+          <UserAvatar className="size-10" name={data.owner?.nickname} url={data.owner?.avatarUrl} hue={data.owner?.avatarHue} />
           <div className="min-w-0 flex-1">
             <div className="text-[10.5px] tracking-wide text-slate-500">圈名归属</div>
             <div className="flex items-center gap-1.5">

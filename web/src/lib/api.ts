@@ -36,6 +36,7 @@ export type NameItem = {
   owner: {
     id: string;
     nickname: string;
+    avatarUrl?: string;
     avatarHue: number;
     bindings: { qq: boolean; wechat: boolean; xiaohongshu: boolean };
   } | null;
