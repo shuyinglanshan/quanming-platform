@@ -67,7 +67,11 @@ export function NotificationBell() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="glass-strong absolute top-[calc(100%+10px)] right-0 z-40 w-[21rem] overflow-hidden rounded-2xl animate-rise">
+          <div className={cn(
+              'glass-strong absolute top-[calc(100%+10px)] right-0 z-40 overflow-hidden rounded-2xl animate-rise',
+              // 移动端自适应：不超出视口，避免横向溢出
+              'w-[min(21rem,calc(100vw-2rem))]',
+            )}>
             <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="text-[13.5px] font-medium text-white">通知</span>

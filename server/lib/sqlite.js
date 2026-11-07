@@ -62,6 +62,15 @@ export function getDb() {
     db.exec('ALTER TABLE users ADD COLUMN court_permission INTEGER DEFAULT 1');
   }
 
+  // 小法庭：投票时长与截止时间设置者（仅管理员可设置）
+  const courtCols = db.prepare('PRAGMA table_info(courts)').all().map((c) => c.name);
+  if (courtCols.length && !courtCols.includes('duration_hours')) {
+    db.exec('ALTER TABLE courts ADD COLUMN duration_hours INTEGER DEFAULT 48');
+  }
+  if (courtCols.length && !courtCols.includes('deadline_set_by')) {
+    db.exec('ALTER TABLE courts ADD COLUMN deadline_set_by TEXT');
+  }
+
   instance = db;
   if (isNew) {
     console.log(`[db] 已初始化数据库: ${path.relative(ROOT, DB_PATH)}`);

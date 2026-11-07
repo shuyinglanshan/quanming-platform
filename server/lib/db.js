@@ -85,6 +85,7 @@ export const db = {
   avatarRequests: [],
   feedback: [],
   courts: [],
+  nameBans: [],
   courtStatements: [],
   courtVotes: [],
   security: {
@@ -124,6 +125,7 @@ function loadAll() {
     .map(repo.mapNotification);
   db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC LIMIT 2000').all().map(repo.mapLog);
   db.courts = conn.prepare('SELECT * FROM courts ORDER BY created_at DESC LIMIT 2000').all().map(repo.mapCourt);
+  db.nameBans = conn.prepare('SELECT * FROM name_bans ORDER BY created_at DESC LIMIT 5000').all().map(repo.mapNameBan);
   db.courtStatements = conn.prepare('SELECT * FROM court_statements ORDER BY created_at ASC LIMIT 20000').all().map(repo.mapCourtStatement);
   db.courtVotes = conn.prepare('SELECT * FROM court_votes ORDER BY created_at ASC LIMIT 50000').all().map(repo.mapCourtVote);
 
@@ -242,7 +244,7 @@ const debounceTimers = new Map();
 const PERSIST_TABLES = [
   'users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas',
   'logs', 'searches', 'settings', 'blocked_ips', 'temp_blocks', 'security_events',
-  'register_attempts', 'login_attempts', 'avatar_requests', 'feedback', 'courts', 'court_statements', 'court_votes',
+  'register_attempts', 'login_attempts', 'avatar_requests', 'feedback', 'courts', 'court_statements', 'court_votes', 'name_bans',
 ];
 
 export function markDirty(table) {
@@ -297,6 +299,7 @@ export function persistTables(tables) {
     if (tables.has('courts')) for (const c of db.courts) repo.saveCourt(c);
     if (tables.has('court_statements')) for (const st of db.courtStatements) repo.saveCourtStatement(st);
     if (tables.has('court_votes')) for (const v of db.courtVotes) repo.saveCourtVote(v);
+    if (tables.has('name_bans')) for (const b of db.nameBans) repo.saveNameBan(b);
     if (tables.has('logs')) for (const l of db.logs) repo.saveLog(l);
     if (tables.has('searches')) repo.replaceSearches(db.searches);
     if (tables.has('settings')) for (const [k, v] of Object.entries(db.settings)) repo.saveSettings(k, v);

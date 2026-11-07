@@ -360,12 +360,16 @@ export function CourtDetailPage() {
           </div>
         )}
 
-        {/* 启动按钮（当事人） */}
-        {court.status === 'running' && isParty && (
-          <Button onClick={startVoting} disabled={submitting} className="w-full">
-            {submitting ? <Loader2 className="size-4 animate-spin" /> : <Gavel className="size-4" />}
-            双方材料已备齐，开启投票
-          </Button>
+        {/* 投票开启提示：仅管理员可设置截止时间 */}
+        {court.status === 'running' && (
+          <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3 text-[11.5px] leading-relaxed text-slate-400">
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Clock3 className="size-3.5" /> 等待管理员开启投票
+            </div>
+            <p className="mt-1 text-slate-500">
+              双方各提交至少一次材料后，由管理员设置投票截止时间并开启投票。
+            </p>
+          </div>
         )}
       </Card>
 
@@ -379,7 +383,21 @@ export function CourtDetailPage() {
             还没有提交材料
           </div>
         ) : (
-          (court.statements || []).map((s) => (
+          /* 按轮次分组：每一轮展示主张方与应诉方各自的提交 */
+          [...new Set((court.statements || []).map((s) => s.round))]
+            .sort((a, b) => a - b)
+            .map((round) => {
+              const roundItems = (court.statements || []).filter((s) => s.round === round);
+              return (
+                <div key={round} className="space-y-2">
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="rounded-md bg-white/8 px-2 py-0.5 text-[10.5px] font-medium text-slate-300">
+                      第 {round} 轮
+                    </span>
+                    <span className="h-px flex-1 bg-white/8" />
+                    <span className="text-[10px] text-slate-600">{roundItems.length} 条提交</span>
+                  </div>
+                  {roundItems.map((s) => (
             <div
               key={s.id}
               className={cn(
@@ -408,7 +426,10 @@ export function CourtDetailPage() {
                 </div>
               )}
             </div>
-          ))
+                  ))}
+                </div>
+              );
+            })
         )}
       </div>
 

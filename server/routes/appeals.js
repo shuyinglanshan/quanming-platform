@@ -64,6 +64,15 @@ router.post('/', requireAuth, uploadByteQuota, upload.array('images', 6), (req, 
   const name = db.names.find((n) => n.id === nameId || n.name === nameId);
   if (!name || name.status === 'hidden') return fail(404, { error: '该圈名不存在或已下架' });
   if (name.ownerId === req.user.id) return fail(400, { error: '你已是该圈名的归属者，无需申诉' });
+
+  // 小法庭败诉后永久禁止申诉该圈名
+  const banned = (db.nameBans || []).find((b) => b.userId === req.user.id && b.nameId === name.id);
+  if (banned) {
+    return fail(403, {
+      error: `你在小法庭中未能获得圈名「${name.name}」的归属，已永久禁止再次申诉该圈名`,
+      code: 'NAME_APPEAL_BANNED',
+    });
+  }
   if (!safeReason) return fail(400, { error: '请选择申诉类型' });
 
   let images = [];

@@ -134,23 +134,42 @@ router.get('/:id', attachUser, (req, res) => {
   res.json({ court: shapeCourt(c, { withDetail: true, viewerId: req.user.id }) });
 });
 
-/* ---------------- 由申诉方发起小法庭 ---------------- */
+/* ---------------- 发起小法庭 ----------------
+ * 规则：
+ * - 必须在**人工归属申诉判决之后**发起
+ * - 只有**未获得归属权**的一方（申诉被驳回者）可发起；胜诉方无需也不能申请
+ * - 同一申诉只能发起一次
+ * - 若该用户曾在小法庭败诉，则永久禁止再申诉该圈名
+ */
 router.post('/', requireAuth, (req, res) => {
-  const { appealId, durationHours = 48 } = req.body || {};
+  const { appealId } = req.body || {};
   const appeal = db.appeals.find((a) => a.id === appealId);
   if (!appeal) return res.status(404).json({ error: '申诉不存在' });
-  if (appeal.userId !== req.user.id) return res.status(403).json({ error: '只有申诉方可以发起小法庭' });
-  if (appeal.status !== 'pending') return res.status(400).json({ error: '该申诉已处理，无法发起小法庭' });
 
+  if (appeal.status === 'pending') {
+    return res.status(400).json({ error: '该申诉尚在人工审核中，判决后才能申请小法庭' });
+  }
+  if (appeal.status !== 'rejected' || appeal.userId !== req.user.id) {
+    return res.status(403).json({
+      error: '只有申诉被驳回的一方可以申请小法庭介入；已获得归属权的无需申请',
+    });
+  }
   if (db.courts.some((c) => c.appealId === appealId)) {
-    return res.status(409).json({ error: '该申诉已进入小法庭流程' });
+    return res.status(409).json({ error: '该申诉已进入小法庭流程，不能重复发起' });
   }
 
   const name = db.names.find((n) => n.id === appeal.nameId);
   if (!name) return res.status(404).json({ error: '圈名不存在' });
 
-  const hours = VOTE_DURATIONS.includes(Number(durationHours)) ? Number(durationHours) : 48;
+  const banned = (db.nameBans || []).find((b) => b.userId === req.user.id && b.nameId === name.id);
+  if (banned) {
+    return res.status(403).json({
+      error: `你在小法庭中未能获得圈名「${name.name}」的归属，已永久禁止再次申诉该圈名`,
+      code: 'NAME_APPEAL_BANNED',
+    });
+  }
 
+  const now = new Date().toISOString();
   const court = {
     id: uid('ct_'),
     nameId: name.id,
@@ -159,56 +178,71 @@ router.post('/', requireAuth, (req, res) => {
     claimantId: req.user.id,
     respondentId: name.ownerId || null,
     status: 'running',
-    startedAt: new Date().toISOString(),
+    startedAt: now,
     votingEndsAt: null,
     closedAt: null,
     winnerId: null,
     verdict: null,
     verdictReason: '',
     judgedBy: null,
-    createdAt: new Date().toISOString(),
-    durationHours: hours,
+    createdAt: now,
+    durationHours: 48,
+    deadlineSetBy: null,
   };
   db.courts.unshift(court);
   save('courts');
 
-  eventLog(req, '发起小法庭', `${name.name} · ${hours}小时投票`);
+  eventLog(req, '发起小法庭', `${name.name} · 申诉被驳回后申请`);
 
-  // 通知对方
   if (court.respondentId) {
     notifyUser(court.respondentId, {
       category: 'system',
       level: 'warning',
       title: `圈名「${name.name}」进入小法庭`,
-      content: `有人对该圈名提出归属争议并申请小法庭介入，你是当前归属方。请进入小法庭提交你的材料与理由。`,
+      content: '对方在人工申诉被驳回后申请小法庭介入。你是当前归属方，请进入小法庭提交你的材料与理由。',
       link: `/court/${court.id}`,
     });
   }
 
-  res.status(201).json({ court: shapeCourt(court, { viewerId: req.user.id }), durationHours: hours });
+  res.status(201).json({ court: shapeCourt(court, { viewerId: req.user.id }) });
 });
 
-/* ---------------- 对方接受并启动投票 ---------------- */
-router.post('/:id/start', requireAuth, (req, res) => {
+/* ---------------- 管理员开启投票（截止时间仅管理员可设） ---------------- */
+router.post('/:id/start', requireAuth, requirePermission('appeal'), (req, res) => {
   const c = db.courts.find((x) => x.id === req.params.id);
   if (!c) return res.status(404).json({ error: '小法庭不存在' });
-  if (c.claimantId !== req.user.id && c.respondentId !== req.user.id) {
-    return res.status(403).json({ error: '只有争议双方可以启动小法庭' });
-  }
-  if (c.status !== 'running') return res.status(400).json({ error: '当前状态无法启动投票' });
+  if (c.status !== 'running') return res.status(400).json({ error: '当前状态无法开启投票' });
 
-  // 双方至少各提交一次材料
   const sides = new Set(db.courtStatements.filter((s) => s.courtId === c.id).map((s) => s.side));
   if (!sides.has('claimant') || !sides.has('respondent')) {
-    return res.status(400).json({ error: '双方都需至少提交一次材料后才能开始投票' });
+    return res.status(400).json({ error: '双方都需至少提交一次材料后才能开启投票' });
   }
 
-  const hours = c.durationHours || 48;
+  const hours = Number(req.body?.durationHours);
+  if (!VOTE_DURATIONS.includes(hours)) {
+    return res.status(400).json({
+      error: `请设置投票时长，可选：${VOTE_DURATIONS.map((h) => h + '小时').join(' / ')}`,
+      allowed: VOTE_DURATIONS,
+    });
+  }
+
   c.status = 'voting';
+  c.durationHours = hours;
+  c.deadlineSetBy = req.user.nickname;
   c.votingEndsAt = new Date(Date.now() + hours * 3600_000).toISOString();
   save('courts');
 
-  eventLog(req, '小法庭开始投票', `${c.nameText} · ${hours}小时`);
+  for (const target of [c.claimantId, c.respondentId].filter(Boolean)) {
+    notifyUser(target, {
+      category: 'system',
+      level: 'info',
+      title: `小法庭「${c.nameText}」开始投票`,
+      content: `管理员已设置投票时长为 ${hours} 小时，截止后按票数自动判定归属。`,
+      link: `/court/${c.id}`,
+    });
+  }
+
+  eventLog(req, '小法庭开启投票', `${c.nameText} · ${hours}小时`);
   res.json({ court: shapeCourt(c, { viewerId: req.user.id }) });
 });
 
@@ -346,38 +380,66 @@ export function settleCourt(courtId, { by = 'system' } = {}) {
 function applyVerdict(c) {
   const name = db.names.find((n) => n.id === c.nameId);
   if (!name || !c.winnerId) return;
-  if (name.ownerId === c.winnerId) return;
 
-  const prev = db.users.find((u) => u.id === name.ownerId);
-  const next = db.users.find((u) => u.id === c.winnerId);
-  name.ownerId = c.winnerId;
-  name.transferCount = (name.transferCount || 0) + 1;
-  name.history = name.history || [];
-  name.history.push({
-    at: new Date().toISOString(),
-    action: 'court',
-    note: `小法庭判决归属：${prev?.nickname || '—'} → ${next?.nickname || '—'}`,
-    by: '小法庭',
-  });
-  save('names');
-
-  if (next) {
-    notifyUser(next.id, {
-      category: 'system',
-      level: 'success',
-      title: `小法庭判决：圈名「${name.name}」归你所有`,
-      content: c.verdictReason,
-      link: `/names/${name.id}`,
+  // 仅在胜出方变化时才转移归属；但下面的「败诉禁令」必须始终执行
+  if (name.ownerId !== c.winnerId) {
+    const prev = db.users.find((u) => u.id === name.ownerId);
+    const next = db.users.find((u) => u.id === c.winnerId);
+    name.ownerId = c.winnerId;
+    name.transferCount = (name.transferCount || 0) + 1;
+    name.history = name.history || [];
+    name.history.push({
+      at: new Date().toISOString(),
+      action: 'court',
+      note: `小法庭判决归属：${prev?.nickname || '—'} → ${next?.nickname || '—'}`,
+      by: '小法庭',
     });
+    save('names');
+
+    if (next) {
+      notifyUser(next.id, {
+        category: 'system',
+        level: 'success',
+        title: `小法庭判决：圈名「${name.name}」归你所有`,
+        content: c.verdictReason,
+        link: `/names/${name.id}`,
+      });
+    }
+    if (prev && prev.id !== c.winnerId) {
+      notifyUser(prev.id, {
+        category: 'system',
+        level: 'warning',
+        title: `小法庭判决：圈名「${name.name}」归属变更`,
+        content: c.verdictReason,
+        link: `/court/${c.id}`,
+      });
+    }
   }
-  if (prev && prev.id !== c.winnerId) {
-    notifyUser(prev.id, {
-      category: 'system',
-      level: 'warning',
-      title: `小法庭判决：圈名「${name.name}」归属变更`,
-      content: c.verdictReason,
-      link: `/court/${c.id}`,
-    });
+
+  // 小法庭落败的申诉方：永久禁止再申诉该圈名（不可撤销）
+  const loserId = c.winnerId === c.claimantId ? c.respondentId : c.claimantId;
+  if (loserId && loserId === c.claimantId) {
+    const exists = (db.nameBans || []).find((b) => b.userId === loserId && b.nameId === name.id);
+    if (!exists) {
+      db.nameBans = db.nameBans || [];
+      db.nameBans.push({
+        id: uid('nb_'),
+        userId: loserId,
+        nameId: name.id,
+        courtId: c.id,
+        reason: `小法庭败诉（${c.verdictReason}）`,
+        createdAt: new Date().toISOString(),
+      });
+      save('name_bans');
+
+      notifyUser(loserId, {
+        category: 'appeal',
+        level: 'danger',
+        title: `已永久禁止申诉圈名「${name.name}」`,
+        content: `你在小法庭中未能获得该圈名归属（${c.verdictReason}）。根据规则，你将永久无法再申诉该圈名。`,
+        link: `/names/${name.id}`,
+      });
+    }
   }
 }
 

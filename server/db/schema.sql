@@ -394,3 +394,19 @@ CREATE TABLE IF NOT EXISTS court_votes (
   UNIQUE(court_id, user_id)           -- 一人一票
 );
 CREATE INDEX IF NOT EXISTS idx_court_votes_court ON court_votes(court_id, side);
+
+-- 小法庭补充字段（旧库通过迁移补齐）
+-- courts.duration_hours      投票时长（小时），仅管理员可设置
+-- courts.deadline_set_by     截止时间设置者
+-- name_bans                  小法庭败诉后永久禁止申诉记录
+CREATE TABLE IF NOT EXISTS name_bans (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  name_id     TEXT NOT NULL,
+  court_id    TEXT,
+  reason      TEXT DEFAULT '',
+  created_at  TEXT NOT NULL,
+  UNIQUE(user_id, name_id)
+);
+CREATE INDEX IF NOT EXISTS idx_name_bans_user ON name_bans(user_id);
+CREATE INDEX IF NOT EXISTS idx_name_bans_name ON name_bans(name_id);

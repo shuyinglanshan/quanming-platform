@@ -39,10 +39,11 @@ router.get('/profile', (req, res) => {
     uid,
   ).map((n) => ({
     id: n.id,
+    claimId: n.claim_id || null,
     name: n.name,
-    description: n.description,
+    description: n.description || '',
     tags: JSON.parse(n.tags || '[]'),
-    views: n.views,
+    views: n.views || 0,
     createdAt: n.created_at,
     approvedAt: n.approved_at,
     owner: { id: n.owner_id, nickname: n.owner_nickname, avatarHue: n.owner_hue },
@@ -232,6 +233,76 @@ router.post('/password', (req, res) => {
   }
   eventLog(req, '修改登录密码', u.email || u.username);
   res.json({ ok: true, revokedOthers: true });
+});
+
+/**
+ * 编辑自己的圈名简介
+ * 仅圈名归属者可改；内容经 sanitizeText 清洗，长度受限
+ */
+router.patch('/names/:id', requireAuth, (req, res) => {
+  const name = db.names.find((n) => n.id === req.params.id);
+  if (!name) return res.status(404).json({ error: '圈名不存在' });
+  if (name.ownerId !== req.user.id) return res.status(403).json({ error: '只有圈名归属者可以编辑' });
+
+  const description = sanitizeText(req.body?.description, 300);
+  name.description = description;
+  save('names');
+  eventLog(req, '编辑圈名简介', `${name.name}`);
+  res.json({ ok: true, name: { id: name.id, name: name.name, description: name.description } });
+});
+
+/**
+ * 补充圈名材料图片
+ * - 复用 upload 中间件的魔数校验（仅位图，禁止 SVG）
+ * - fileRecord 生成 URL / 大小 / MIME / SHA-256 哈希
+ * - 追加到对应申请记录的 images，详情页即时可见
+ */
+router.post('/names/:id/evidence', requireAuth, upload.array('images', 4), (req, res) => {
+  const name = db.names.find((n) => n.id === req.params.id);
+  if (!name) return res.status(404).json({ error: '圈名不存在' });
+  if (name.ownerId !== req.user.id) return res.status(403).json({ error: '只有圈名归属者可以补充材料' });
+  if (!req.files?.length) return res.status(400).json({ error: '请选择要上传的图片' });
+
+  const claim =
+    (name.claimId && db.claims.find((c) => c.id === name.claimId)) ||
+    db.claims.find((c) => c.nameId === name.id && c.status === 'approved') ||
+    null;
+  if (!claim) return res.status(400).json({ error: '未找到该圈名的归属申请记录' });
+
+  const records = req.files.map(fileRecord);
+  claim.images = Array.isArray(claim.images) ? claim.images : [];
+  const total = claim.images.length + records.length;
+  if (total > 12) {
+    return res.status(400).json({ error: '材料图片最多 12 张，请先删除部分再上传' });
+  }
+  claim.images.push(...records);
+  save('claims');
+
+  eventLog(req, '补充圈名材料', `${name.name} +${records.length}张`);
+  res.json({ ok: true, evidence: claim.images });
+});
+
+/**
+ * 删除自己补充的材料图片（仅允许删除自己圈名下的）
+ */
+router.delete('/names/:id/evidence', requireAuth, (req, res) => {
+  const name = db.names.find((n) => n.id === req.params.id);
+  if (!name) return res.status(404).json({ error: '圈名不存在' });
+  if (name.ownerId !== req.user.id) return res.status(403).json({ error: '只有圈名归属者可以删除材料' });
+
+  const url = String(req.body?.url || '');
+  const claim =
+    (name.claimId && db.claims.find((c) => c.id === name.claimId)) ||
+    db.claims.find((c) => c.nameId === name.id && c.status === 'approved') ||
+    null;
+  if (!claim) return res.status(400).json({ error: '未找到申请记录' });
+
+  const before = (claim.images || []).length;
+  claim.images = (claim.images || []).filter((i) => i.url !== url);
+  if (claim.images.length === before) return res.status(404).json({ error: '图片不存在' });
+  save('claims');
+  eventLog(req, '删除圈名材料', `${name.name}`);
+  res.json({ ok: true, evidence: claim.images });
 });
 
 export default router;

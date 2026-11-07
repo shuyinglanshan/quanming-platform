@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  Check, Clock3, Gavel, Loader2, RefreshCw, Scale, Search, ShieldCheck, ThumbsUp, Users,
+  Check, Clock3, Gavel, Loader2, Play, RefreshCw, Scale, Search, ShieldCheck, ThumbsUp, Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,6 +31,8 @@ export function CourtsPanel({ onChanged }: { onChanged?: () => void }) {
   const [winnerId, setWinnerId] = useState('');
   const [reason, setReason] = useState('');
   const [acting, setActing] = useState(false);
+  // 管理员开启投票（设置截止时长）
+  const [startHours, setStartHours] = useState(48);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -232,6 +234,56 @@ export function CourtsPanel({ onChanged }: { onChanged?: () => void }) {
                   ))}
                 </div>
               </div>
+
+              {/* 开启投票：截止时间仅管理员可设置 */}
+              {detail.status === 'running' && (
+                <div className="rounded-xl border border-violet-300/25 bg-violet-400/[0.08] p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-[11.5px] font-medium text-violet-200">
+                    <Clock3 className="size-3.5" /> 开启投票（设置截止时长）
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[24, 48, 72, 168].map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setStartHours(h)}
+                        className={cn(
+                          'rounded-lg border px-2 py-1.5 text-[11px] transition',
+                          startHours === h
+                            ? 'border-violet-300/50 bg-violet-400/15 text-white'
+                            : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20',
+                        )}
+                      >
+                        {h === 168 ? '7 天' : h + ' 小时'}
+                      </button>
+                    ))}
+                  </div>
+                  <Button
+                    size="sm"
+                    className="mt-2 w-full"
+                    disabled={acting}
+                    onClick={async () => {
+                      setActing(true);
+                      try {
+                        const r = await api.post<{ court: Court }>(`/court/${detail.id}/start`, { durationHours: startHours });
+                        setDetail(r.court);
+                        toast.success(`投票已开启，时长 ${startHours} 小时`);
+                        load();
+                        onChanged?.();
+                      } catch (err) {
+                        toast.error(err instanceof ApiError ? err.message : '开启失败');
+                      } finally {
+                        setActing(false);
+                      }
+                    }}
+                  >
+                    {acting ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                    开启投票
+                  </Button>
+                  <p className="mt-1.5 text-[10.5px] leading-relaxed text-violet-200/70">
+                    投票截止时间仅管理员可设置。开启后全体注册用户可投票，到期自动按票数判决。
+                  </p>
+                </div>
+              )}
 
               {/* 改判 */}
               <div className="rounded-xl border border-amber-300/20 bg-amber-400/[0.06] p-3">

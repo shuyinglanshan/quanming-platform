@@ -15,6 +15,7 @@ import {
   Plus,
   ShieldCheck,
   Scale,
+  ShieldAlert,
   Sparkles,
   Flag,
   Gavel,
@@ -88,6 +89,12 @@ export default function ProfilePage() {
   const [courtDialog, setCourtDialog] = useState<{ open: boolean; appeal?: any }>({ open: false });
   const [courtHours, setCourtHours] = useState(48);
   const [courtLoading, setCourtLoading] = useState(false);
+  // 圈名编辑（简介 + 材料）
+  const [nameEdit, setNameEdit] = useState<{ open: boolean; item?: any }>({ open: false });
+  const [nameDesc, setNameDesc] = useState('');
+  const [nameEvidence, setNameEvidence] = useState<any[]>([]);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [detail, setDetail] = useState<Claim | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -234,6 +241,17 @@ export default function ProfilePage() {
 
   const { stats, names, claims } = data;
   const bindings = data.user.bindings || {};
+
+  const openNameEdit = (item: any) => {
+    setNameEdit({ open: true, item });
+    setNameDesc(item.description || '');
+    setNameEvidence([]);
+    setEvidenceFiles([]);
+    api
+      .get<{ name: { evidence?: any[] } }>(`/names/${item.id}`)
+      .then((r) => setNameEvidence(r.name?.evidence || []))
+      .catch(() => setNameEvidence([]));
+  };
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -384,6 +402,12 @@ export default function ProfilePage() {
                     <Badge variant="success" className="gap-1">
                       <BadgeCheck className="size-3" /> 已认证
                     </Badge>
+                  </div>
+
+                  <div className="relative mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => openNameEdit(n)}>
+                      <Pencil className="size-3.5" /> 编辑简介与材料
+                    </Button>
                   </div>
                   <p className="relative mt-3 line-clamp-2 text-[12.5px] leading-relaxed text-slate-400">
                     {n.description || '未填写简介'}
@@ -553,13 +577,14 @@ export default function ProfilePage() {
                         <Trash2 className="size-3.5" /> 撤回
                       </Button>
                     )}
-                    {a.status === 'pending' && (
+                    {/* 小法庭：仅人工申诉被驳回的一方可申请（胜诉方无需申请） */}
+                    {a.status === 'rejected' && (
                       <Button
                         size="sm"
                         variant="secondary"
-                        onClick={() => { setCourtDialog({ open: true, appeal: a }); setCourtHours(48); }}
+                        onClick={() => { setCourtDialog({ open: true, appeal: a }); }}
                       >
-                        <Scale className="size-3.5" /> 申请小法庭
+                        <Scale className="size-3.5" /> 申请小法庭介入
                       </Button>
                     )}
                     <Button variant="ghost" size="sm" asChild>
@@ -908,6 +933,135 @@ export default function ProfilePage() {
       </Dialog>
 
       {/* 绑定账号 */}
+      {/* 编辑圈名简介与材料 */}
+      <Dialog open={nameEdit.open} onOpenChange={(o) => setNameEdit((c) => ({ ...c, open: o }))}>
+        <DialogContent className="max-h-[88vh] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="size-4 text-violet-300" /> 编辑「{nameEdit.item?.name}」
+            </DialogTitle>
+            <DialogDescription>修改圈名简介，补充能证明归属的材料图片。</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="name-desc">圈名简介</Label>
+              <Textarea
+                id="name-desc"
+                value={nameDesc}
+                onChange={(e) => setNameDesc(e.target.value.slice(0, 300))}
+                placeholder="介绍一下这个圈名的含义、来源或使用场景"
+                className="min-h-24"
+              />
+              <div className="text-right text-[10.5px] text-slate-500">{nameDesc.length}/300</div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>归属材料</Label>
+                <span className="text-[10.5px] text-slate-500">{nameEvidence.length}/12 张</span>
+              </div>
+              {nameEvidence.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {nameEvidence.map((img, i) => (
+                    <div key={img.url + i} className="group relative aspect-square overflow-hidden rounded-lg border border-white/10">
+                      <img src={img.url} alt={img.name} className="size-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const r = await api.del<{ evidence: any[] }>(`/me/names/${nameEdit.item.id}/evidence`, { url: img.url } as any);
+                            setNameEvidence(r.evidence || []);
+                            toast.success('已删除');
+                            load();
+                          } catch (err) {
+                            toast.error(err instanceof ApiError ? err.message : '删除失败');
+                          }
+                        }}
+                        className="absolute top-1 right-1 rounded-full bg-rose-500/90 p-1 text-white opacity-0 transition group-hover:opacity-100"
+                      >
+                        <X className="size-3" />
+                      </button>
+                      {img.sha256 && (
+                        <span className="absolute bottom-0 left-0 right-0 truncate bg-black/70 px-1 py-0.5 text-[8px] text-emerald-300">
+                          {String(img.sha256).slice(0, 10)}…
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {nameEvidence.length < 12 && (
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.03] px-3 py-3 text-[11.5px] text-slate-400 transition hover:border-violet-300/40 hover:text-violet-200">
+                  <ImagePlus className="size-4" />
+                  {evidenceFiles.length ? `已选 ${evidenceFiles.length} 张，点击提交上传` : '点击选择图片补充材料'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const list = Array.from(e.target.files || []).slice(0, 4);
+                      setEvidenceFiles(list);
+                    }}
+                  />
+                </label>
+              )}
+              {evidenceFiles.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="w-full"
+                  disabled={nameSaving}
+                  onClick={async () => {
+                    setNameSaving(true);
+                    try {
+                      const form = new FormData();
+                      evidenceFiles.forEach((f) => form.append('images', f));
+                      const r = await api.post<{ evidence: any[] }>(`/me/names/${nameEdit.item.id}/evidence`, form);
+                      setNameEvidence(r.evidence || []);
+                      setEvidenceFiles([]);
+                      toast.success('材料已上传');
+                      load();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '上传失败');
+                    } finally {
+                      setNameSaving(false);
+                    }
+                  }}
+                >
+                  {nameSaving ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+                  上传材料
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setNameEdit({ open: false })}>关闭</Button>
+            <Button
+              disabled={nameSaving}
+              onClick={async () => {
+                setNameSaving(true);
+                try {
+                  await api.patch(`/me/names/${nameEdit.item.id}`, { description: nameDesc });
+                  toast.success('简介已保存');
+                  setNameEdit({ open: false });
+                  load();
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '保存失败');
+                } finally {
+                  setNameSaving(false);
+                }
+              }}
+            >
+              {nameSaving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              保存简介
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* 申请小法庭 */}
       <Dialog open={courtDialog.open} onOpenChange={(o) => setCourtDialog((c) => ({ ...c, open: o }))}>
         <DialogContent className="max-w-md">
@@ -916,41 +1070,37 @@ export default function ProfilePage() {
               <Scale className="size-4 text-violet-300" /> 申请小法庭介入
             </DialogTitle>
             <DialogDescription>
-              争议将由全体注册用户投票裁决。双方需轮番提交材料，投票结束后票数高者获得圈名归属。
+              你的申诉已被人工驳回。如仍认为归属有误，可申请小法庭由社区投票裁决。
             </DialogDescription>
           </DialogHeader>
+
           <div className="space-y-3">
             <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3 text-[12px] leading-relaxed text-slate-400">
               <div className="mb-1 font-medium text-white">{courtDialog.appeal?.name}</div>
-              发起后对方会收到通知，双方各提交一次材料后即可开启投票。
+              发起后双方轮番提交材料，管理员开启投票后由全体注册用户裁决。
             </div>
-            <div className="space-y-2">
-              <Label>投票时长</Label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[24, 48, 72, 168].map((h) => (
-                  <button
-                    key={h}
-                    type="button"
-                    onClick={() => setCourtHours(h)}
-                    className={cn(
-                      'rounded-lg border px-2 py-1.5 text-[11.5px] transition',
-                      courtHours === h
-                        ? 'border-violet-300/45 bg-violet-400/12 text-white'
-                        : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20',
-                    )}
-                  >
-                    {h === 168 ? '7 天' : h + ' 小时'}
-                  </button>
-                ))}
+
+            {/* 关键风险提示 */}
+            <div className="rounded-xl border border-rose-300/30 bg-rose-400/[0.10] p-3">
+              <div className="flex items-center gap-1.5 text-[12px] font-medium text-rose-200">
+                <ShieldAlert className="size-3.5" /> 请务必确认
               </div>
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-rose-100/90">
+                如果小法庭最终仍判定你未获得该圈名的归属权，
+                <span className="font-medium text-rose-200">你将永久禁止再申诉该圈名</span>，
+                此限制不可撤销。
+              </p>
             </div>
+
             <p className="text-[11px] leading-relaxed text-slate-500">
-              小法庭一旦开启投票，结果由社区投票决定；如认为存在误判，可在判决后联系管理员复核。
+              投票截止时间由管理员设置，你无法自行调整。建议先准备好充分的材料再发起。
             </p>
           </div>
+
           <DialogFooter className="flex-col gap-2 sm:flex-row">
-            <Button variant="secondary" onClick={() => setCourtDialog({ open: false })}>取消</Button>
+            <Button variant="secondary" onClick={() => setCourtDialog({ open: false })}>我再想想</Button>
             <Button
+              variant="destructive"
               disabled={courtLoading}
               onClick={async () => {
                 if (!courtDialog.appeal) return;
@@ -958,7 +1108,6 @@ export default function ProfilePage() {
                 try {
                   const res = await api.post<{ court: any }>('/court', {
                     appealId: courtDialog.appeal.id,
-                    durationHours: courtHours,
                   });
                   toast.success('小法庭已创建', { description: '请先提交你的材料，等待对方回应' });
                   setCourtDialog({ open: false });
@@ -971,7 +1120,7 @@ export default function ProfilePage() {
               }}
             >
               {courtLoading ? <Loader2 className="size-4 animate-spin" /> : <Scale className="size-4" />}
-              确认发起
+              确认申请，接受规则
             </Button>
           </DialogFooter>
         </DialogContent>

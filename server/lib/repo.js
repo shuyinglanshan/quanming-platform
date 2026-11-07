@@ -804,6 +804,8 @@ export function mapCourt(row) {
     verdict: row.verdict,
     verdictReason: row.verdict_reason,
     judgedBy: row.judged_by,
+    durationHours: int(row.duration_hours, 48),
+    deadlineSetBy: row.deadline_set_by || null,
     createdAt: row.created_at,
   };
 }
@@ -811,12 +813,13 @@ export function mapCourt(row) {
 export function saveCourt(c) {
   getDb()
     .prepare(
-      `INSERT INTO courts (id,name_id,name_text,appeal_id,claimant_id,respondent_id,status,started_at,voting_ends_at,closed_at,winner_id,verdict,verdict_reason,judged_by,created_at)
-       VALUES (@id,@name_id,@name_text,@appeal_id,@claimant_id,@respondent_id,@status,@started_at,@voting_ends_at,@closed_at,@winner_id,@verdict,@verdict_reason,@judged_by,@created_at)
+      `INSERT INTO courts (id,name_id,name_text,appeal_id,claimant_id,respondent_id,status,started_at,voting_ends_at,closed_at,winner_id,verdict,verdict_reason,judged_by,created_at,duration_hours,deadline_set_by)
+       VALUES (@id,@name_id,@name_text,@appeal_id,@claimant_id,@respondent_id,@status,@started_at,@voting_ends_at,@closed_at,@winner_id,@verdict,@verdict_reason,@judged_by,@created_at,@duration_hours,@deadline_set_by)
        ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, started_at=excluded.started_at, voting_ends_at=excluded.voting_ends_at,
         closed_at=excluded.closed_at, winner_id=excluded.winner_id, verdict=excluded.verdict,
-        verdict_reason=excluded.verdict_reason, judged_by=excluded.judged_by`,
+        verdict_reason=excluded.verdict_reason, judged_by=excluded.judged_by,
+        duration_hours=excluded.duration_hours, deadline_set_by=excluded.deadline_set_by`,
     )
     .run({
       id: c.id,
@@ -834,6 +837,8 @@ export function saveCourt(c) {
       verdict_reason: c.verdictReason || '',
       judged_by: c.judgedBy || null,
       created_at: c.createdAt,
+      duration_hours: int(c.durationHours, 48),
+      deadline_set_by: c.deadlineSetBy || null,
     });
 }
 
@@ -898,5 +903,35 @@ export function saveCourtVote(v) {
       side: v.side,
       reason: v.reason || '',
       created_at: v.createdAt,
+    });
+}
+
+/* ================= name_bans ================= */
+export function mapNameBan(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    nameId: row.name_id,
+    courtId: row.court_id || null,
+    reason: row.reason || '',
+    createdAt: row.created_at,
+  };
+}
+
+export function saveNameBan(b) {
+  getDb()
+    .prepare(
+      `INSERT INTO name_bans (id,user_id,name_id,court_id,reason,created_at)
+       VALUES (@id,@user_id,@name_id,@court_id,@reason,@created_at)
+       ON CONFLICT(user_id,name_id) DO NOTHING`,
+    )
+    .run({
+      id: b.id,
+      user_id: b.userId,
+      name_id: b.nameId,
+      court_id: b.courtId || null,
+      reason: b.reason || '',
+      created_at: b.createdAt,
     });
 }
