@@ -98,33 +98,41 @@ export function LogsPanel() {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="glass rounded-2xl p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1">
-            {TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => {
-                  setTab(t.key);
-                  setPage(1);
-                }}
-                className={cn(
-                  'flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] whitespace-nowrap transition',
-                  tab === t.key ? 'bg-white/12 text-white' : 'text-slate-400 hover:text-slate-200',
-                )}
-              >
-                <span className="whitespace-nowrap">{t.label}</span>
-                {data?.counts && (
-                  <span className={cn('shrink-0 rounded px-1 text-[10px] tabular-nums', tab === t.key ? 'bg-white/15 text-slate-100' : 'bg-white/5 text-slate-500')}>
-                    {data.counts[t.key] ?? 0}
-                  </span>
-                )}
-              </button>
-            ))}
+    <div className="w-full min-w-0 space-y-3">
+      <div className="glass rounded-2xl p-3 sm:p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          {/* 标签栏：空间不足时自动换行，避免横向溢出 */}
+          <div className="min-w-0 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => {
+                    setTab(t.key);
+                    setPage(1);
+                  }}
+                  className={cn(
+                    'flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] whitespace-nowrap transition sm:px-2.5 sm:text-[12px]',
+                    tab === t.key ? 'bg-white/12 text-white' : 'text-slate-400 hover:text-slate-200',
+                  )}
+                >
+                  <span className="whitespace-nowrap">{t.label}</span>
+                  {data?.counts && (
+                    <span
+                      className={cn(
+                        'shrink-0 rounded px-1 text-[10px] tabular-nums',
+                        tab === t.key ? 'bg-white/15 text-slate-100' : 'bg-white/5 text-slate-500',
+                      )}
+                    >
+                      {data.counts[t.key] ?? 0}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="relative ml-auto w-full sm:w-64">
+          <div className="relative w-full sm:ml-auto sm:w-64">
             <Search className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-slate-500" />
             <Input
               value={q}
@@ -155,8 +163,8 @@ export function LogsPanel() {
         </div>
       </div>
 
-      <div className="glass overflow-hidden rounded-2xl">
-        <div className="hidden grid-cols-[130px_1fr_150px_110px_80px] gap-3 border-b border-white/[0.07] px-4 py-2.5 text-[10.5px] tracking-wide text-slate-500 uppercase md:grid">
+      <div className="glass w-full min-w-0 overflow-hidden rounded-2xl">
+        <div className="hidden grid-cols-[130px_minmax(0,1fr)_150px_110px_80px] gap-3 border-b border-white/[0.07] px-4 py-2.5 text-[10.5px] tracking-wide text-slate-500 uppercase md:grid">
           <span>时间</span>
           <span>操作 / 路径</span>
           <span>访问者</span>
@@ -177,7 +185,7 @@ export function LogsPanel() {
               return (
                 <div
                   key={l.id}
-                  className="grid grid-cols-1 gap-1.5 px-4 py-2.5 text-[12px] transition hover:bg-white/[0.03] md:grid-cols-[130px_1fr_150px_110px_80px] md:items-center md:gap-3"
+                  className="grid min-w-0 grid-cols-1 gap-1.5 px-3 py-2.5 text-[12px] transition hover:bg-white/[0.03] sm:px-4 md:grid-cols-[130px_minmax(0,1fr)_150px_110px_80px] md:items-center md:gap-3"
                 >
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                     <Activity className="size-3 text-slate-600 md:hidden" />
@@ -199,10 +207,10 @@ export function LogsPanel() {
                         </Badge>
                       )}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1 truncate font-mono text-[10.5px] text-slate-600">
-                      <Globe2 className="size-2.5 shrink-0" />
-                      <span className="truncate">{l.path}</span>
-                      {l.detail && <span className="ml-1 truncate text-slate-500">· {l.detail}</span>}
+                    <div className="mt-0.5 flex items-start gap-1 font-mono text-[10.5px] leading-relaxed break-all text-slate-600">
+                      <Globe2 className="mt-0.5 size-2.5 shrink-0" />
+                      <span className="min-w-0 break-all">{l.path}</span>
+                      {l.detail && <span className="ml-1 min-w-0 break-all text-slate-500">· {l.detail}</span>}
                     </div>
                   </div>
 
@@ -214,7 +222,7 @@ export function LogsPanel() {
                     </div>
                   </div>
 
-                  <div className="font-mono text-[11px] text-slate-500">{l.ip}</div>
+                  <div className="min-w-0 font-mono text-[11px] break-all text-slate-500">{l.ip}</div>
 
                   <div className="flex items-center gap-1.5 md:justify-end">
                     <span
