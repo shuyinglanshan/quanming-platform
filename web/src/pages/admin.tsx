@@ -104,14 +104,15 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async (silent = false, quiet = false) => {
     if (silent) setRefreshing(true);
     else setLoading(true);
     try {
       const res = await api.get<Stats>('/admin/stats');
       setStats(res);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : '统计数据加载失败');
+      // 轮询失败保持静默，避免网络抖动时反复弹窗
+      if (!quiet) toast.error(err instanceof ApiError ? err.message : '统计数据加载失败');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -121,6 +122,43 @@ export default function AdminPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * 概览页自动同步
+   * 前台搜索会实时写入搜索日志，但后台此前只在进入页面时拉取一次，
+   * 导致「搜索热词」长时间不更新。这里改为可见时每 30s 静默刷新。
+   * 只在 overview 页签 + 页面可见时轮询，切到其他面板或隐藏标签页即停止，避免无谓请求。
+   */
+  useEffect(() => {
+    if (tab !== 'overview') return;
+    let timer: number | null = null;
+
+    const start = () => {
+      if (timer) return;
+      timer = window.setInterval(() => load(true, true), 30000);
+    };
+    const stop = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        load(true, true);
+        start();
+      }
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [tab, load]);
 
   const nav = NAV.filter((n) => !n.permission || can(n.permission));
   const pending = stats?.cards.pending ?? 0;
@@ -325,8 +363,16 @@ function Overview({
 
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="glass rounded-2xl p-5">
-          <h3 className="text-[14px] font-medium text-white">搜索热词</h3>
-          <p className="mt-0.5 mb-4 text-[11.5px] text-slate-500">用户在前台检索最多的关键词</p>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-[14px] font-medium text-white">搜索热词</h3>
+            <span className="flex items-center gap-1 text-[10px] text-emerald-300/80">
+              <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" />
+              实时
+            </span>
+          </div>
+          <p className="mt-0.5 mb-4 text-[11.5px] text-slate-500">
+            用户在前台检索最多的关键词 · 每 30 秒自动同步
+          </p>
           <div className="space-y-1.5">
             {stats.topSearches.length === 0 && <p className="text-[12px] text-slate-500">暂无搜索记录</p>}
             {stats.topSearches.slice(0, 6).map((s, i) => (

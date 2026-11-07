@@ -52,6 +52,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const listRef = useRef<HTMLElement>(null);
   const pendingScroll = useRef(false);
+  // 待上报的搜索词：等列表结果返回后再发送，携带真实 hit
+  const pendingLog = useRef<string>('');
 
   const fetchNames = useCallback(async () => {
     setLoading(true);
@@ -88,8 +90,21 @@ export default function HomePage() {
     setCommitted(q);
     setPage(1);
     pendingScroll.current = true;
-    if (q) api.post('/names/search-log', { q, hit: true }).catch(() => {});
+    // 搜索日志改为「拿到结果后」再上报，携带真实命中情况，
+    // 避免无结果的关键词也被计入热词（此前 hit 被硬编码为 true）
+    pendingLog.current = q.trim();
   };
+
+  // 列表结果回来后上报搜索行为（含真实命中）
+  useEffect(() => {
+    if (loading || !data) return;
+    const q = pendingLog.current;
+    if (!q) return;
+    pendingLog.current = '';
+    api
+      .post('/names/search-log', { q, hit: (data.items?.length ?? 0) > 0 })
+      .catch(() => {});
+  }, [loading, data]);
 
   useEffect(() => {
     if (!pendingScroll.current || loading) return;

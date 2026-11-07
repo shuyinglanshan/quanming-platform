@@ -47,9 +47,18 @@ router.get('/suggest', (req, res) => {
 
 /* 搜索行为记录（用于后台统计热词） */
 router.post('/search-log', (req, res) => {
-  const q = String(req.body?.q || '').trim();
-  if (q) {
-    db.searches.unshift({ q: q.slice(0, 60), ts: Date.now(), userId: req.user?.id || null, hit: Boolean(req.body?.hit) });
+  const q = String(req.body?.q || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 60);
+  // 忽略空白词与纯符号，避免污染热词统计
+  if (q && /[\p{L}\p{N}]/u.test(q)) {
+    db.searches.unshift({
+      q,
+      ts: Date.now(),
+      userId: req.user?.id || null,
+      hit: Boolean(req.body?.hit),
+    });
     if (db.searches.length > 2000) db.searches.length = 2000;
     saveDebounced('searches');
   }
