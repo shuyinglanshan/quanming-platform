@@ -804,6 +804,65 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
         </DialogContent>
       </Dialog>
 
+      {/* 设置头衔 */}
+      <Dialog open={!!titleTarget} onOpenChange={(o) => !o && setTitleTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Award className="size-4 text-amber-300" /> 设置头衔
+            </DialogTitle>
+            <DialogDescription>
+              为「{titleTarget?.nickname}」设置展示头衔，会显示在个人中心与圈名详情页。留空表示移除。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="title-input">头衔（最多 20 字）</Label>
+            <Input
+              id="title-input"
+              value={titleValue}
+              onChange={(e) => setTitleValue(e.target.value.slice(0, 20))}
+              placeholder="例如：元老圈友 / 认证创作者"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {['元老圈友', '认证创作者', '社区贡献者', '荣誉成员'].map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTitleValue(t)}
+                  className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-slate-400 transition hover:border-amber-300/40 hover:text-amber-200"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setTitleTarget(null)}>取消</Button>
+            <Button
+              disabled={acting}
+              onClick={async () => {
+                if (!titleTarget) return;
+                setActing(true);
+                try {
+                  await api.post(`/admin/users/${titleTarget.id}/title`, { title: titleValue.trim() });
+                  toast.success(titleValue.trim() ? '头衔已设置' : '头衔已移除');
+                  setTitleTarget(null);
+                  load();
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '设置失败');
+                } finally {
+                  setActing(false);
+                }
+              }}
+            >
+              <Award className="size-4" /> 保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!delTarget} onOpenChange={(o) => !o && setDelTarget(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>

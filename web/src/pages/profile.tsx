@@ -1220,8 +1220,37 @@ export default function ProfilePage() {
           </DialogHeader>
 
           {avatarData?.pending ? (
-            <div className="rounded-xl border border-amber-300/25 bg-amber-400/[0.08] p-3 text-[12px] leading-relaxed text-amber-200">
-              你已有一条头像申请正在审核中，请等待审核结果后再提交新的申请。
+            <div className="space-y-2">
+              <div className="rounded-xl border border-amber-300/25 bg-amber-400/[0.08] p-3 text-[12px] leading-relaxed text-amber-200">
+                你已有一条头像申请正在审核中，请等待审核结果后再提交新的申请。
+              </div>
+              {/* 撤回审核中的申请：后端 DELETE /me/avatar/:id 早已存在，此前前端无入口 */}
+              {(() => {
+                const p = avatarData.requests?.find((r: any) => r.status === 'pending');
+                return p ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full text-rose-300 hover:text-rose-200"
+                    disabled={avatarBusy}
+                    onClick={async () => {
+                      setAvatarBusy(true);
+                      try {
+                        await api.del(`/me/avatar/${p.id}`);
+                        toast.success('已撤回头像申请');
+                        const fresh = await api.get<any>('/me/avatar');
+                        setAvatarData(fresh);
+                      } catch (err) {
+                        toast.error(err instanceof ApiError ? err.message : '撤回失败');
+                      } finally {
+                        setAvatarBusy(false);
+                      }
+                    }}
+                  >
+                    <X className="size-3.5" /> 撤回审核中的申请
+                  </Button>
+                ) : null;
+              })()}
             </div>
           ) : (
             <div className="space-y-3">

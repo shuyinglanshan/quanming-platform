@@ -644,7 +644,10 @@ router.get('/logs', requirePermission('logs'), (req, res) => {
 });
 
 /* ---------------- 访问日志详情 ---------------- */
-router.get('/logs/:id', requirePermission('logs'), (req, res) => {
+router.get('/logs/:id', requirePermission('logs'), (req, res, next) => {
+  // 路由冲突防护：/logs/integrity 是独立端点，不能被 :id 抢先匹配
+  if (req.params.id === 'integrity') return next();
+
   const log = db.logs.find((l) => l.id === req.params.id);
   if (!log) return res.status(404).json({ error: '日志不存在或已过期' });
 

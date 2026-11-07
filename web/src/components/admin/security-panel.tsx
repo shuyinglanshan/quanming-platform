@@ -17,6 +17,7 @@ import {
   UserPlus,
   Repeat,
   Save,
+  Server,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { IpDetailDialog } from './ip-detail-dialog';
@@ -81,6 +82,28 @@ export function SecurityPanel() {
   const [acting, setActing] = useState(false);
   const [ipDetail, setIpDetail] = useState<string | null>(null);
   const [ipDetailOpen, setIpDetailOpen] = useState(false);
+  // 系统健康（metrics + 日志完整性）：后端早已有接口，此前无展示入口
+  const [health, setHealth] = useState<any>(null);
+  const [integrity, setIntegrity] = useState<any>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+
+  const loadHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const [m, i] = await Promise.all([
+        api.get<any>('/admin/metrics'),
+        api.get<any>('/admin/logs/integrity'),
+      ]);
+      setHealth(m);
+      setIntegrity(i);
+    } catch {
+      /* 静默失败，避免影响风控主功能 */
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadHealth(); }, [loadHealth]);
 
   const openIpDetail = (ip: string) => {
     setIpDetail(ip);
@@ -595,6 +618,52 @@ export function SecurityPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* 系统健康：进程指标 + 日志链完整性 */}
+      <div className="glass rounded-2xl p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 text-[13.5px] font-medium text-white">
+            <Server className="size-4 text-cyan-300" /> 系统健康
+          </h3>
+          <Button size="sm" variant="secondary" onClick={loadHealth} disabled={healthLoading}>
+            <RefreshCw className={cn('size-3.5', healthLoading && 'animate-spin')} /> 刷新
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            { k: '运行时长', v: health ? `${Math.floor(health.uptime / 3600)}h ${Math.floor((health.uptime % 3600) / 60)}m` : '—', tone: 'text-white' },
+            { k: '内存占用', v: health ? `${Math.round(health.memory.rss / 1024 / 1024)} MB` : '—', tone: 'text-violet-200' },
+            { k: '活动会话', v: health?.sessions ?? '—', tone: 'text-sky-200' },
+            { k: '日志总条数', v: health?.db?.logs ?? '—', tone: 'text-slate-200' },
+          ].map((i) => (
+            <div key={i.k} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2">
+              <div className="text-[10px] text-slate-500">{i.k}</div>
+              <div className={cn('mt-0.5 text-[14px] font-semibold tabular-nums', i.tone)}>{i.v}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px]">
+          <span className="text-slate-500">日志链完整性：</span>
+          {integrity ? (
+            integrity.ok ? (
+              <span className="flex items-center gap-1 rounded-md border border-emerald-300/25 bg-emerald-400/10 px-2 py-0.5 text-emerald-200">
+                <ShieldCheck className="size-3" /> 校验通过（{integrity.total} 条）
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 rounded-md border border-rose-300/25 bg-rose-400/10 px-2 py-0.5 text-rose-200">
+                <ShieldAlert className="size-3" /> 检测到篡改，断链于 {String(integrity.brokenAt).slice(0, 12)}
+              </span>
+            )
+          ) : (
+            <span className="text-slate-600">检测中…</span>
+          )}
+        </div>
+        <p className="mt-2 text-[10.5px] leading-relaxed text-slate-500">
+          日志采用哈希链式存储，任意一条被篡改都会导致后续校验失败，可用于审计取证。
+        </p>
+      </div>
+
       <IpDetailDialog
         open={ipDetailOpen}
         ip={ipDetail}
