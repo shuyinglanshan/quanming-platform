@@ -118,15 +118,23 @@ export function deleteUser(id) {
 
 /* ================= sessions ================= */
 export const mapSession = (row) =>
-  row ? { token: row.token, userId: row.user_id, createdAt: row.created_at, expiresAt: row.expires_at } : null;
+  row
+    ? {
+        token: row.token,
+        userId: row.user_id,
+        createdAt: row.created_at,
+        lastActiveAt: row.last_active_at || row.created_at,
+        expiresAt: row.expires_at,
+      }
+    : null;
 
 export function saveSession(s) {
   getDb()
     .prepare(
-      `INSERT INTO sessions (token,user_id,created_at,expires_at) VALUES (?,?,?,?)
-       ON CONFLICT(token) DO UPDATE SET expires_at=excluded.expires_at`,
+      `INSERT INTO sessions (token,user_id,created_at,last_active_at,expires_at) VALUES (?,?,?,?,?)
+       ON CONFLICT(token) DO UPDATE SET expires_at=excluded.expires_at, last_active_at=excluded.last_active_at`,
     )
-    .run(s.token, s.userId, s.createdAt, s.expiresAt);
+    .run(s.token, s.userId, s.createdAt, s.lastActiveAt || s.createdAt || null, s.expiresAt);
 }
 export const deleteSession = (token) => getDb().prepare('DELETE FROM sessions WHERE token=?').run(token);
 export const deleteSessionsByUser = (uid) => getDb().prepare('DELETE FROM sessions WHERE user_id=?').run(uid);
@@ -141,9 +149,11 @@ export function replaceSessions(list = []) {
   const conn = getDb();
   conn.prepare('DELETE FROM sessions').run();
   const stmt = conn.prepare(
-    'INSERT INTO sessions (token,user_id,created_at,expires_at) VALUES (?,?,?,?)',
+    'INSERT INTO sessions (token,user_id,created_at,last_active_at,expires_at) VALUES (?,?,?,?,?)',
   );
-  for (const s of list) stmt.run(s.token, s.userId, s.createdAt, s.expiresAt);
+  for (const s of list) {
+    stmt.run(s.token, s.userId, s.createdAt, s.lastActiveAt || s.createdAt || null, s.expiresAt);
+  }
 }
 
 /* ================= names ================= */

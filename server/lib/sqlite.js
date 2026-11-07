@@ -62,6 +62,12 @@ export function getDb() {
     db.exec('ALTER TABLE users ADD COLUMN court_permission INTEGER DEFAULT 1');
   }
 
+  // 会话：最后活跃时间（用于闲置自动踢出）
+  const sessCols = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+  if (sessCols.length && !sessCols.includes('last_active_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN last_active_at INTEGER');
+  }
+
   // 小法庭：投票时长与截止时间设置者（仅管理员可设置）
   const courtCols = db.prepare('PRAGMA table_info(courts)').all().map((c) => c.name);
   if (courtCols.length && !courtCols.includes('duration_hours')) {

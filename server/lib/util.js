@@ -52,12 +52,21 @@ export function parseQQNumberEmail(input) {
   return r.valid ? { email: r.email, qq: '' } : null;
 }
 
-/** 圈名规则：2-16 个字符，中英文数字与常见符号 */
+/**
+ * 圈名规则：不限制长度上限
+ *
+ * 说明：圈名本身不再限制字符数，但为保证数据库与页面渲染安全，
+ * 仍保留 200 字符的硬上限（远超正常使用，仅防御超长垃圾提交），
+ * 并继续限制可用字符集，避免控制字符与 HTML 注入。
+ */
+export const NAME_MAX_LENGTH = 200;
+
 export function validateName(name) {
   const value = String(name || '').trim();
   if (!value) return '请填写圈名';
   if ([...value].length < 2) return '圈名至少需要 2 个字符';
-  if ([...value].length > 16) return '圈名最多 16 个字符';
+  if ([...value].length > NAME_MAX_LENGTH) return `圈名过长（最多 ${NAME_MAX_LENGTH} 个字符）`;
+  if (/[\u0000-\u001f\u007f]/.test(value)) return '圈名不能包含控制字符';
   if (!/^[\u4e00-\u9fa5a-zA-Z0-9_\-·.。\s]+$/.test(value)) return '圈名仅支持中英文、数字与 _ - · . 等符号';
   return null;
 }
