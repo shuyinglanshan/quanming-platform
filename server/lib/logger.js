@@ -3,7 +3,7 @@ import { db } from './db.js';
 import { saveLog, pruneLogs } from './repo.js';
 import { clientIp, parseUA } from './util.js';
 
-const MAX_LOGS = 2000;
+const MAX_LOGS = 3000;
 let logWrites = 0;
 
 /**

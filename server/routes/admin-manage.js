@@ -556,7 +556,13 @@ router.delete('/names/:id', requirePermission('names'), (req, res) => {
  * 造成「点击其他记录时数量减少」的错觉。
  * 因此统计与列表都排除日志面板自身产生的请求。
  */
-const SELF_PATHS = [/^\/api\/admin\/logs/, /^\/api\/admin\/stats/, /^\/api\/admin\/security/];
+const SELF_PATHS = [
+  /^\/api\/admin\/logs(?:\/|\?|$)/,
+  /^\/api\/admin\/stats(?:\?|$)/,
+  /^\/api\/admin\/security(?:\?|$)/,
+  /^\/api\/admin\/ip\//,
+  /^\/api\/notifications\/unread-count(?:\?|$)/,
+];
 const isSelfRequest = (l) => SELF_PATHS.some((re) => re.test(l.path || ''));
 
 router.get('/logs', requirePermission('logs'), (req, res) => {
