@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Pager } from './pager';
+import { IpDetailDialog } from './ip-detail-dialog';
 import { api, ApiError } from '@/lib/api';
 import { cn, formatDate } from '@/lib/utils';
 
@@ -34,6 +35,12 @@ type LogRow = {
   device: string;
   level?: string;
   detail?: string;
+  geo?: string;
+  geoKind?: string;
+  isPrivate?: boolean;
+  blocked?: boolean;
+  tempBlocked?: boolean;
+  tempUntil?: number | null;
 };
 
 const TABS = [
@@ -57,6 +64,8 @@ export function LogsPanel() {
   const [data, setData] = useState<{ items: LogRow[]; total: number; pages: number; counts: Record<string, number> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [auto, setAuto] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,9 +192,11 @@ export function LogsPanel() {
             {data.items.map((l) => {
               const bad = l.status >= 400 || l.level === 'error';
               return (
-                <div
+                <button
                   key={l.id}
-                  className="grid min-w-0 grid-cols-1 gap-1.5 px-3 py-2.5 text-[12px] transition hover:bg-white/[0.03] sm:px-4 md:grid-cols-[130px_minmax(0,1fr)_150px_110px_80px] md:items-center md:gap-3"
+                  type="button"
+                  onClick={() => { setDetailId(l.id); setDetailOpen(true); }}
+                  className="grid w-full min-w-0 grid-cols-1 gap-1.5 px-3 py-2.5 text-left text-[12px] transition hover:bg-white/[0.05] focus-visible:bg-white/[0.06] focus-visible:outline-none sm:px-4 md:grid-cols-[130px_minmax(0,1fr)_150px_110px_80px] md:items-center md:gap-3"
                 >
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                     <Activity className="size-3 text-slate-600 md:hidden" />
@@ -206,6 +217,12 @@ export function LogsPanel() {
                           异常
                         </Badge>
                       )}
+                      {l.blocked && (
+                        <Badge variant="danger" className="px-1.5 py-0 text-[9.5px]">已封禁</Badge>
+                      )}
+                      {!l.blocked && l.tempBlocked && (
+                        <Badge variant="warning" className="px-1.5 py-0 text-[9.5px]">限制中</Badge>
+                      )}
                     </div>
                     <div className="mt-0.5 flex items-start gap-1 font-mono text-[10.5px] leading-relaxed break-all text-slate-600">
                       <Globe2 className="mt-0.5 size-2.5 shrink-0" />
@@ -222,7 +239,10 @@ export function LogsPanel() {
                     </div>
                   </div>
 
-                  <div className="min-w-0 font-mono text-[11px] break-all text-slate-500">{l.ip}</div>
+                  <div className="min-w-0">
+                    <div className="font-mono text-[11px] break-all text-slate-400">{l.ip}</div>
+                    {l.geo && <div className="truncate text-[10px] text-slate-500">{l.geo}</div>}
+                  </div>
 
                   <div className="flex items-center gap-1.5 md:justify-end">
                     <span
@@ -241,7 +261,7 @@ export function LogsPanel() {
                     </span>
                     {l.ms > 0 && <span className="text-[10px] text-slate-600">{l.ms}ms</span>}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -259,8 +279,18 @@ export function LogsPanel() {
 
       <div className="flex items-start gap-2 rounded-xl border border-white/8 bg-white/[0.03] p-3 text-[11px] leading-relaxed text-slate-500">
         <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-slate-500" />
-        访问日志保留最近 3000 条记录，包含请求路径、状态码、耗时、IP 与设备信息。敏感接口不会记录请求内容。
+        <span>
+          点击任意一条记录可查看详情（时间、IP 归属地、响应耗时、客户端信息），并可对该 IP 设置临时限制或永久拉黑。
+          日志保留最近 3000 条，敏感接口不记录请求内容。
+        </span>
       </div>
+
+      <IpDetailDialog
+        open={detailOpen}
+        logId={detailId}
+        onOpenChange={setDetailOpen}
+        onChanged={load}
+      />
     </div>
   );
 }

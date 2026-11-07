@@ -7,6 +7,8 @@ import { eventLog } from '../lib/logger.js';
 import { notifyUser } from '../lib/notify.js';
 import { shapeAvatarRequest, removeAvatarFile } from '../lib/avatar.js';
 import { updateUser } from '../lib/repo-user.js';
+import { lookupIp } from '../lib/ip-geo.js';
+import { isPermanentlyBlocked, activeTempBlock } from '../lib/guard.js';
 import { hashPassword } from '../lib/password.js';
 import crypto from 'node:crypto';
 import { deleteName } from '../lib/repo.js';
@@ -564,8 +566,26 @@ router.get('/logs', requirePermission('logs'), (req, res) => {
     );
   }
   const result = paginate(list, page, pageSize);
+
+  // 列表内附带归属地与封禁状态，便于快速筛查
+  const decorate = (l) => {
+    const geo = lookupIp(l.ip);
+    const perm = isPermanentlyBlocked(l.ip);
+    const temp = activeTempBlock(l.ip);
+    return {
+      ...l,
+      geo: geo.region,
+      geoKind: geo.kind,
+      isPrivate: geo.isPrivate,
+      blocked: Boolean(perm),
+      tempBlocked: Boolean(temp),
+      tempUntil: temp?.until || null,
+    };
+  };
+
   res.json({
     ...result,
+    items: result.items.map(decorate),
     counts: {
       all: db.logs.length,
       error: db.logs.filter((l) => l.status >= 400 || l.level === 'error').length,
@@ -573,6 +593,100 @@ router.get('/logs', requirePermission('logs'), (req, res) => {
       review: db.logs.filter((l) => /审核|驳回|通过|申诉|圈名/.test(l.action)).length,
       security: db.logs.filter((l) => /限制|拉黑|封禁|频繁/.test(l.action)).length,
     },
+  });
+});
+
+/* ---------------- 访问日志详情 ---------------- */
+router.get('/logs/:id', requirePermission('logs'), (req, res) => {
+  const log = db.logs.find((l) => l.id === req.params.id);
+  if (!log) return res.status(404).json({ error: '日志不存在或已过期' });
+
+  const geo = lookupIp(log.ip);
+  const perm = isPermanentlyBlocked(log.ip);
+  const temp = activeTempBlock(log.ip);
+
+  // 同一 IP 的近期行为（最多 20 条），用于判断是否为攻击源
+  const sameIp = db.logs.filter((l) => l.ip === log.ip).slice(0, 20).map((l) => ({
+    id: l.id,
+    ts: l.ts,
+    method: l.method,
+    path: l.path,
+    status: l.status,
+    ms: l.ms,
+    action: l.action,
+  }));
+
+  const sameIpStats = (() => {
+    const all = db.logs.filter((l) => l.ip === log.ip);
+    const last1h = all.filter((l) => Date.now() - l.ts < 3600_000);
+    return {
+      total: all.length,
+      last1h: last1h.length,
+      errors: all.filter((l) => l.status >= 400).length,
+      rateLimited: all.filter((l) => l.status === 429).length,
+      firstSeen: all.length ? all[all.length - 1].ts : null,
+      lastSeen: all.length ? all[0].ts : null,
+    };
+  })();
+
+  res.json({
+    log: {
+      ...log,
+      geo: geo.region,
+      geoKind: geo.kind,
+      isPrivate: geo.isPrivate,
+      isIpv6: geo.isIpv6,
+    },
+    ip: {
+      ...geo,
+      blocked: Boolean(perm),
+      blockReason: perm?.reason || '',
+      blockedAt: perm?.createdAt || null,
+      tempBlocked: Boolean(temp),
+      tempUntil: temp?.until || null,
+      tempReason: temp?.reason || '',
+    },
+    sameIp,
+    sameIpStats,
+  });
+});
+
+/* ---------------- 统计某 IP 的概况（风控页用） ---------------- */
+router.get('/ip/:ip/profile', requirePermission('logs'), (req, res) => {
+  const ip = String(req.params.ip || '').trim();
+  if (!ip) return res.status(400).json({ error: '缺少 IP 参数' });
+
+  const geo = lookupIp(ip);
+  const perm = isPermanentlyBlocked(ip);
+  const temp = activeTempBlock(ip);
+
+  const logs = db.logs.filter((l) => l.ip === ip);
+  const recent = logs.slice(0, 30).map((l) => ({
+    id: l.id, ts: l.ts, method: l.method, path: l.path, status: l.status, ms: l.ms, action: l.action,
+  }));
+
+  const users = [...new Set(logs.map((l) => l.email).filter(Boolean))].slice(0, 10);
+
+  res.json({
+    ip: {
+      ...geo,
+      blocked: Boolean(perm),
+      blockReason: perm?.reason || '',
+      blockedAt: perm?.createdAt || null,
+      tempBlocked: Boolean(temp),
+      tempUntil: temp?.until || null,
+      tempReason: temp?.reason || '',
+    },
+    stats: {
+      total: logs.length,
+      last1h: logs.filter((l) => Date.now() - l.ts < 3600_000).length,
+      errors: logs.filter((l) => l.status >= 400).length,
+      rateLimited: logs.filter((l) => l.status === 429).length,
+      firstSeen: logs.length ? logs[logs.length - 1].ts : null,
+      lastSeen: logs.length ? logs[0].ts : null,
+    },
+    recent,
+    users,
   });
 });
 

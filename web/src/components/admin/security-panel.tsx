@@ -19,6 +19,7 @@ import {
   Save,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { IpDetailDialog } from './ip-detail-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -78,6 +79,13 @@ export function SecurityPanel() {
   const [blockMode, setBlockMode] = useState<'permanent' | 'temp'>('permanent');
   const [blockSeconds, setBlockSeconds] = useState(60);
   const [acting, setActing] = useState(false);
+  const [ipDetail, setIpDetail] = useState<string | null>(null);
+  const [ipDetailOpen, setIpDetailOpen] = useState(false);
+
+  const openIpDetail = (ip: string) => {
+    setIpDetail(ip);
+    setIpDetailOpen(true);
+  };
   const [regGuard, setRegGuard] = useState<{ config: RegisterGuard; rows: RegisterRow[] } | null>(null);
   const [regForm, setRegForm] = useState<RegisterGuard | null>(null);
   const [bindLimit, setBindLimit] = useState(3);
@@ -338,7 +346,13 @@ export function SecurityPanel() {
                 <div className="space-y-1.5">
                   {data.tempBlocks.map((b) => (
                     <div key={b.ip} className="flex items-center gap-2 rounded-xl border border-amber-300/15 bg-amber-400/[0.06] px-2.5 py-2">
-                      <span className="font-mono text-[12px] text-amber-100">{b.ip}</span>
+                      <button
+                        type="button"
+                        onClick={() => openIpDetail(b.ip)}
+                        className="shrink-0 rounded font-mono text-[12px] text-amber-100 underline decoration-dotted underline-offset-2 transition hover:text-white"
+                      >
+                        {b.ip}
+                      </button>
                       <span className="text-[10.5px] text-amber-200/70">剩余 {b.remainSeconds}s</span>
                       <span className="ml-auto truncate text-[10px] text-amber-200/60">{b.reason}</span>
                       <Button variant="ghost" size="icon-sm" onClick={() => unblock(b.ip)} className="text-amber-200/80 hover:text-white">
@@ -362,7 +376,13 @@ export function SecurityPanel() {
                 <div className="max-h-52 space-y-1.5 overflow-y-auto pr-0.5">
                   {data.blockedIps.map((b) => (
                     <div key={b.ip} className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2">
-                      <span className="font-mono text-[12px] text-slate-100">{b.ip}</span>
+                      <button
+                        type="button"
+                        onClick={() => openIpDetail(b.ip)}
+                        className="shrink-0 rounded font-mono text-[12px] text-slate-100 underline decoration-dotted underline-offset-2 transition hover:text-violet-200"
+                      >
+                        {b.ip}
+                      </button>
                       <span className="truncate text-[10px] text-slate-500">{b.reason}</span>
                       <span className="ml-auto shrink-0 text-[10px] text-slate-600">{formatDate(b.createdAt)}</span>
                       <Button variant="ghost" size="icon-sm" className="text-emerald-300/80 hover:text-emerald-200" onClick={() => unblock(b.ip)}>
@@ -575,6 +595,12 @@ export function SecurityPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <IpDetailDialog
+        open={ipDetailOpen}
+        ip={ipDetail}
+        onOpenChange={setIpDetailOpen}
+        onChanged={() => load(true)}
+      />
     </div>
   );
 }
