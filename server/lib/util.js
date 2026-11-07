@@ -1,29 +1,11 @@
+import { resolveEmailProvider } from './email-providers.js';
+
 import { trustedClientIp } from './ip.js';
 
 /** 通用工具函数 */
 
 /** 邮箱格式校验（允许任意合法域名，不再限制 QQ 邮箱） */
 const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
-
-/** 常见免费邮箱域名（用于展示友好名称，不影响校验） */
-const KNOWN_DOMAINS = {
-  'qq.com': 'QQ邮箱',
-  'foxmail.com': 'Foxmail',
-  '163.com': '网易邮箱',
-  '126.com': '网易邮箱',
-  'yeah.net': '网易邮箱',
-  'sina.com': '新浪邮箱',
-  'sina.cn': '新浪邮箱',
-  'sohu.com': '搜狐邮箱',
-  'aliyun.com': '阿里邮箱',
-  'outlook.com': 'Outlook',
-  'hotmail.com': 'Outlook',
-  'live.com': 'Outlook',
-  'gmail.com': 'Gmail',
-  'icloud.com': 'iCloud',
-  'yahoo.com': 'Yahoo',
-  'protonmail.com': 'ProtonMail',
-};
 
 /**
  * 通用邮箱解析与规范化
@@ -52,15 +34,15 @@ export function parseEmail(input) {
     return { valid: false, email, domain: '', provider: 'unknown', label: '邮箱域名不合法' };
   }
 
-  const provider = KNOWN_DOMAINS[domain] || 'custom';
+  const resolved = resolveEmailProvider(domain);
   return {
     valid: true,
     email,
     domain,
-    provider,
-    label: KNOWN_DOMAINS[domain] || '邮箱',
-    // 是否为常见邮箱，供前端提示
-    common: Boolean(KNOWN_DOMAINS[domain]),
+    provider: resolved.kind,
+    label: resolved.label,
+    // 是否为常见/可识别的邮箱服务商
+    common: resolved.common,
   };
 }
 

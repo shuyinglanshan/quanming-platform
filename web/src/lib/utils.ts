@@ -1,3 +1,4 @@
+import { resolveEmailProvider } from './email-providers';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -107,24 +108,6 @@ export function emailProviderLabel(email?: string | null) {
   const value = String(email || '').toLowerCase();
   const at = value.lastIndexOf('@');
   if (at === -1) return '邮箱';
-  const domain = value.slice(at + 1);
-  const map: Record<string, string> = {
-    'qq.com': 'QQ 邮箱',
-    'foxmail.com': 'Foxmail',
-    '163.com': '网易邮箱',
-    '126.com': '网易邮箱',
-    'yeah.net': '网易邮箱',
-    'sina.com': '新浪邮箱',
-    'sina.cn': '新浪邮箱',
-    'sohu.com': '搜狐邮箱',
-    'aliyun.com': '阿里邮箱',
-    'outlook.com': 'Outlook',
-    'hotmail.com': 'Outlook',
-    'live.com': 'Outlook',
-    'gmail.com': 'Gmail',
-    'icloud.com': 'iCloud',
-    'yahoo.com': 'Yahoo',
-    'protonmail.com': 'ProtonMail',
-  };
-  return map[domain] || '邮箱';
+  return resolveEmailProvider(value.slice(at + 1)).label;
 }
+

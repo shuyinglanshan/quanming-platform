@@ -8,7 +8,12 @@ import { useEmailRegistered } from '@/lib/use-email-status';
 export const EMAIL_RE = /^[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
 
 /** 常见域名快捷建议 */
-const SUGGEST_DOMAINS = ['qq.com', '163.com', '126.com', 'gmail.com', 'outlook.com', 'foxmail.com'];
+const SUGGEST_DOMAINS = [
+  'qq.com', '163.com', '126.com', 'foxmail.com', 'sina.com', 'sohu.com',
+  '139.com', '189.cn', 'wo.cn', 'aliyun.com', 'yeah.net', '21cn.com',
+  'gmail.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'yahoo.com',
+  'proton.me', 'zoho.com', 'live.com',
+];
 
 /**
  * 邮箱输入框
@@ -99,7 +104,7 @@ export function EmailField({
       {showSuggest && (
         <div className="flex flex-wrap gap-1.5">
           {SUGGEST_DOMAINS.filter((d) => d.startsWith(domainPart.toLowerCase()))
-            .slice(0, 4)
+            .slice(0, 6)
             .map((d) => (
               <button
                 key={d}
@@ -122,7 +127,7 @@ export function EmailField({
         ) : (
           <span className={cn('flex items-center gap-1 text-[11px]', showError ? 'text-rose-300' : 'text-slate-500')}>
             {showError ? <CircleAlert className="size-3" /> : null}
-            {showError ? '请输入完整的邮箱地址，例如 name@example.com' : '支持任意邮箱，如 QQ、网易、Gmail 等'}
+            {showError ? '请输入完整的邮箱地址，例如 name@example.com' : '支持任意邮箱：QQ、网易、Gmail、Outlook、企业邮箱等'}
           </span>
         )}
       </div>
