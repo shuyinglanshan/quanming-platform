@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AtSign, CircleAlert, Eye, EyeOff, KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Smartphone, User as UserIcon } from 'lucide-react';
 import { AuthShell } from '@/components/auth-shell';
-import { QQEmailField } from '@/components/qq-email-field';
+import { EmailField } from '@/components/email-field';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,7 +18,7 @@ type Mode = 'password' | 'code';
 function detectKind(value: string): { icon: any; hint: string } {
   const v = value.trim();
   if (!v) return { icon: UserIcon, hint: '邮箱 / 手机号 / 用户名 均可登录' };
-  if (v.includes('@')) return { icon: AtSign, hint: '使用 QQ 邮箱登录（QQ号@qq.com）' };
+  if (v.includes('@')) return { icon: AtSign, hint: '使用邮箱登录' };
   if (/^1\d{10}$/.test(v)) return { icon: Smartphone, hint: '使用手机号登录' };
   if (/^1\d+$/.test(v)) return { icon: Smartphone, hint: '手机号需为 11 位数字' };
   return { icon: UserIcon, hint: '使用用户名登录' };
@@ -85,7 +85,7 @@ export default function LoginPage() {
 
   const handleCodeLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!emailValid) return toast.error('请输入 5-11 位 QQ 号');
+    if (!emailValid) return toast.error('请输入正确的邮箱地址');
     if (!/^\d{6}$/.test(code)) return toast.error('请输入 6 位验证码');
     setLoading(true);
     try {
@@ -99,12 +99,12 @@ export default function LoginPage() {
   };
 
   const sendCode = async () => {
-    if (!emailValid) return toast.error('请输入正确的 QQ 邮箱');
+    if (!emailValid) return toast.error('请输入正确的邮箱地址');
     setSending(true);
     try {
       await api.post('/auth/send-code', { email: email.trim(), purpose: 'login' });
       setCountdown(60);
-      toast.success('验证码已发送', { description: '请查看你的 QQ 邮箱（含垃圾箱），10 分钟内有效' });
+      toast.success('验证码已发送', { description: '请查看你的邮箱（含垃圾箱），10 分钟内有效' });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '验证码发送失败');
     } finally {
@@ -148,7 +148,7 @@ export default function LoginPage() {
                   id="identifier"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="QQ 邮箱 / 手机号 / 用户名"
+                  placeholder="邮箱 / 手机号 / 用户名"
                   autoComplete="username"
                   className="pl-10"
                 />
@@ -189,14 +189,14 @@ export default function LoginPage() {
         <TabsContent value="code">
           <form onSubmit={handleCodeLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email-code">QQ 号</Label>
-              <QQEmailField
+              <Label htmlFor="email-code">邮箱地址</Label>
+              <EmailField
                 id="email-code"
                 value={email}
                 onChange={setEmail}
-                onDomain={(info) => setEmailValid(info.valid)}
+                onValidChange={(info) => setEmailValid(info.valid)}
                 statusMode="login"
-                placeholder="请输入 5-11 位 QQ 号"
+                placeholder="请输入邮箱地址"
               />
             </div>
             <div className="space-y-2">
@@ -226,7 +226,7 @@ export default function LoginPage() {
             {mailConfigured === false && (
               <div className="flex items-start gap-2 rounded-xl border border-amber-300/20 bg-amber-400/[0.08] p-3 text-[11.5px] leading-relaxed text-amber-200/90">
                 <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-                平台尚未完成 QQ 邮箱发信配置，验证码登录暂不可用。可改用密码登录，或联系管理员完成配置。
+                平台尚未完成邮箱发信配置，验证码登录暂不可用。可改用密码登录，或联系管理员完成配置。
               </div>
             )}
 
@@ -241,7 +241,7 @@ export default function LoginPage() {
       <div className={cn('mt-5 flex items-start gap-2 rounded-xl border border-white/8 bg-white/[0.03] p-3 text-[11.5px] leading-relaxed text-slate-400')}>
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
         <span>
-          支持 QQ 邮箱、手机号、用户名三种方式登录；邮箱验证码 10 分钟内有效。
+          支持邮箱、手机号、用户名三种方式登录；邮箱验证码 10 分钟内有效。
           若长时间未收到验证码，请检查垃圾邮件箱或加入交流群联系管理员。
         </span>
       </div>

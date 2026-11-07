@@ -28,7 +28,7 @@ import {
   requireAuth,
 } from '../lib/auth.js';
 import {
-  parseQQNumberEmail,
+  parseEmail,
   validatePassword,
   validateNickname,
   sanitizeText,
@@ -94,12 +94,12 @@ router.post('/captcha/verify', (req, res) => {
 
 /* ---------------- 邮箱后缀识别 ---------------- */
 router.get('/email-check', (req, res) => {
-  const parsed = parseQQNumberEmail(req.query.email);
-  if (!parsed) {
-    return res.json({ valid: false, domain: '', provider: 'unknown', label: '请输入 5-11 位 QQ 号', registered: false });
+  const info = parseEmail(req.query.email);
+  if (!info.valid) {
+    return res.json({ ...info, registered: false });
   }
-  const user = findUserByEmail(parsed.email);
-  res.json({ valid: true, domain: 'qq.com', provider: 'qq', label: 'QQ邮箱', registered: Boolean(user) });
+  const user = findUserByEmail(info.email);
+  res.json({ ...info, registered: Boolean(user) });
 });
 
 /* ---------------- 可用性检查（手机号 / 用户名） ---------------- */
@@ -131,16 +131,16 @@ router.get('/availability', (req, res) => {
 
 /* ---------------- 发送邮箱验证码 ---------------- */
 router.post('/send-code', async (req, res) => {
-  // email 需要被规范化为「QQ号@qq.com」，因此用 let 而非 const
+  // 任意合法邮箱均可注册/登录
   let { email, purpose = 'register' } = req.body || {};
   if (!['register', 'login'].includes(purpose)) return res.status(400).json({ error: '验证码用途不合法' });
 
-  const parsed = parseQQNumberEmail(email);
-  if (!parsed) {
-    return res.status(400).json({ error: '请输入 5-11 位 QQ 号，邮箱后缀固定为 @qq.com' });
+  const parsed = parseEmail(email);
+  if (!parsed.valid) {
+    return res.status(400).json({ error: parsed.label });
   }
   email = parsed.email;
-  const info = { valid: true, domain: 'qq.com', provider: 'qq' };
+  const info = { valid: true, domain: parsed.domain, provider: parsed.provider };
 
   const existing = findUserByEmail(email);
   if (purpose === 'register' && existing) return res.status(409).json({ error: '该邮箱已注册，请直接登录' });
@@ -359,16 +359,16 @@ router.post('/register', async (req, res) => {
       return res.status(blocked?.status || 409).json(blocked?.body || { error: '该手机号已注册，请直接登录' });
     }
   } else {
-    // 注册固定使用「QQ号@qq.com」
-    const parsed = parseQQNumberEmail(email);
-    if (!parsed) {
-      const blocked = afterRegisterFailure(req, 'QQ 邮箱格式不正确');
+    // 支持任意合法邮箱后缀
+    const parsed = parseEmail(email);
+    if (!parsed.valid) {
+      const blocked = afterRegisterFailure(req, '邮箱格式不正确');
       return res
         .status(blocked?.status || 400)
-        .json(blocked?.body || { error: '请输入 5-11 位 QQ 号，邮箱后缀固定为 @qq.com' });
+        .json(blocked?.body || { error: parsed.label });
     }
     email = parsed.email;
-    emailInfo = { valid: true, domain: 'qq.com', provider: 'qq' };
+    emailInfo = { valid: true, domain: parsed.domain, provider: parsed.provider };
     if (findUserByEmail(email)) {
       const blocked = afterRegisterFailure(req, '邮箱已注册');
       return res.status(blocked?.status || 409).json(blocked?.body || { error: '该邮箱已注册，请直接登录' });
@@ -489,11 +489,11 @@ router.post('/login', (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
-/* ---------------- 验证码登录（QQ 邮箱） ---------------- */
+/* ---------------- 验证码登录（邮箱） ---------------- */
 router.post('/login-code', (req, res) => {
   let { email, code } = req.body || {};
-  const parsed = parseQQNumberEmail(email);
-  if (!parsed) return res.status(400).json({ error: '请输入 5-11 位 QQ 号，邮箱后缀固定为 @qq.com' });
+  const parsed = parseEmail(email);
+  if (!parsed.valid) return res.status(400).json({ error: parsed.label });
   email = parsed.email;
   const user = findUserByEmail(email);
   if (!user) return res.status(404).json({ error: '该邮箱尚未注册，请先注册账号' });

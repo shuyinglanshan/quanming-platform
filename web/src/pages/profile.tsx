@@ -8,6 +8,7 @@ import {
   Copy,
   ImagePlus,
   KeyRound,
+  Mail,
   Link2,
   Link2Off,
   Loader2,
@@ -51,7 +52,7 @@ import { ClaimForm } from '@/components/claim-form';
 import { JoinGroupButton } from '@/components/join-group-button';
 import { useAuth } from '@/lib/auth';
 import { api, ApiError, type Appeal, type Claim, type NameItem, type User } from '@/lib/api';
-import { cn, formatDate, initials, relativeTime, statusTone, STATUS_TEXT, BINDING_META, ROLE_META, type PlatformKey } from '@/lib/utils';
+import { cn, formatDate, initials, relativeTime, statusTone, STATUS_TEXT, BINDING_META, ROLE_META, emailProviderLabel, type PlatformKey } from '@/lib/utils';
 
 type ProfileData = {
   user: User;
@@ -303,9 +304,39 @@ export default function ProfilePage() {
               <span className={cn('rounded-full border px-2 py-0.5 text-[10.5px]', ROLE_META[user.role]?.tone || ROLE_META.user.tone)}>
                 {ROLE_META[user.role]?.label || '普通用户'}
               </span>
-              <Badge variant="success">QQ 邮箱已验证</Badge>
+              {user.email && (
+                <Badge variant="success" className="gap-1">
+                  <BadgeCheck className="size-3" /> {emailProviderLabel(user.email)}已验证
+                </Badge>
+              )}
+              {user.phone && (
+                <Badge variant="cyan" className="gap-1">
+                  <Smartphone className="size-3" /> 手机号已验证
+                </Badge>
+              )}
             </div>
-            <p className="mt-1 text-[12.5px] text-slate-400">{user.email}</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px] text-slate-400">
+              {user.email ? (
+                <span className="flex items-center gap-1.5 break-all">
+                  <Mail className="size-3.5 shrink-0 text-slate-500" />
+                  {user.email}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-slate-500">
+                  <Mail className="size-3.5" /> 未绑定邮箱
+                </span>
+              )}
+              {user.phone ? (
+                <span className="flex items-center gap-1.5">
+                  <Smartphone className="size-3.5 shrink-0 text-slate-500" />
+                  {user.phoneMasked || user.phone}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-slate-500">
+                  <Smartphone className="size-3.5" /> 未绑定手机号
+                </span>
+              )}
+            </div>
             <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-slate-400">
               {user.bio || '这个人很神秘，还没有写下简介。'}
             </p>
@@ -634,6 +665,29 @@ export default function ProfilePage() {
             </div>
           </div>
 
+          {/* 邮箱 */}
+          <Card className="mb-3 gap-4 p-5">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="grid size-10 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white">
+                <Mail className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[14px] font-medium text-white">邮箱</div>
+                <div className="break-all text-[11px] text-slate-500">
+                  {user.email ? `已绑定 ${user.email}` : '未绑定邮箱'}
+                </div>
+              </div>
+              {user.email ? (
+                <Badge variant="success">{emailProviderLabel(user.email)}</Badge>
+              ) : (
+                <Badge variant="secondary">未绑定</Badge>
+              )}
+            </div>
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-[11.5px] text-slate-400">
+              邮箱用于接收验证码与账号找回通知，如需更换请联系管理员。
+            </div>
+          </Card>
+
           {/* 手机号 */}
           <Card className="mb-3 gap-4 p-5">
             <div className="flex flex-wrap items-center gap-3">
@@ -661,7 +715,7 @@ export default function ProfilePage() {
             </div>
             <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-[11.5px] text-slate-400">
               账号标识：<span className="text-slate-200">{user.username || '—'}</span>
-              {user.email && <span className="ml-3">邮箱：<span className="text-slate-200">{user.email}</span></span>}
+              {user.phone && <span className="ml-3">手机号：<span className="text-slate-200">{user.phoneMasked || user.phone}</span></span>}
             </div>
           </Card>
 
@@ -814,8 +868,8 @@ export default function ProfilePage() {
               </div>
               <div className="space-y-1.5 rounded-xl border border-white/8 bg-white/[0.035] p-3 text-[11.5px] text-slate-400">
                 <div className="flex justify-between">
-                  <span>注册邮箱</span>
-                  <span className="text-slate-200">{user.email}</span>
+                  <span>绑定邮箱</span>
+                  <span className="break-all text-slate-200">{user.email || '未绑定'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>账号角色</span>

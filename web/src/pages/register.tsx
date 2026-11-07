@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Check, CircleAlert, Eye, EyeOff, Loader2, MailCheck, Smartphone, UserPlus } from 'lucide-react';
 import { AuthShell } from '@/components/auth-shell';
-import { QQEmailField } from '@/components/qq-email-field';
+import { EmailField } from '@/components/email-field';
 import { SliderCaptcha, type CaptchaState } from '@/components/slider-captcha';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -117,14 +117,14 @@ export default function RegisterPage() {
   const phoneOk = PHONE_RE.test(phone.trim());
 
   const sendCode = async () => {
-    // 只在邮箱注册模式下校验 QQ 号，避免切到手机号后仍误报
+    // 只在邮箱注册模式下校验邮箱，避免切到手机号后仍误报
     if (method !== 'email') return;
-    if (!emailValid) return toast.error('请输入 5-11 位 QQ 号');
+    if (!emailValid) return toast.error('请输入正确的邮箱地址');
     setSending(true);
     try {
       await api.post('/auth/send-code', { email: email.trim(), purpose: 'register' });
       setCountdown(60);
-      toast.success('验证码已发送至 QQ 邮箱', { description: '10 分钟内有效，请注意查收（含垃圾箱）' });
+      toast.success('验证码已发送至邮箱', { description: '10 分钟内有效，请注意查收（含垃圾箱）' });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '验证码发送失败');
     } finally {
@@ -136,7 +136,7 @@ export default function RegisterPage() {
     e.preventDefault();
     if (!usernameOk) return toast.error('用户名需 4-20 位，以字母开头，仅含字母、数字与下划线');
     if (!nickOk) return toast.error('昵称需要 2-16 个字符');
-    if (method === 'email' && !emailValid) return toast.error('请输入 5-11 位 QQ 号');
+    if (method === 'email' && !emailValid) return toast.error('请输入正确的邮箱地址');
     if (method === 'phone' && !phoneOk) return toast.error('请输入有效的手机号');
     if (!pwdOk) return toast.error('密码至少 8 位，且需包含字母与数字');
     if (!pwdMatch) return toast.error('两次输入的密码不一致');
@@ -180,7 +180,7 @@ export default function RegisterPage() {
   return (
     <AuthShell
       title="创建你的账号"
-      subtitle="支持 QQ 邮箱或手机号注册，注册后即可登记属于你的圈名。"
+      subtitle="支持邮箱或手机号注册，注册后即可登记属于你的圈名。"
       footer={
         <>
           已经有账号了？
@@ -194,7 +194,7 @@ export default function RegisterPage() {
         <Tabs value={method} onValueChange={(v) => setMethod(v as 'email' | 'phone')}>
           <TabsList className="mb-4 w-full">
             <TabsTrigger value="email" className="flex-1">
-              <MailCheck className="size-3.5" /> QQ 邮箱注册
+              <MailCheck className="size-3.5" /> 邮箱注册
             </TabsTrigger>
             <TabsTrigger value="phone" className="flex-1">
               <Smartphone className="size-3.5" /> 手机号注册
@@ -204,14 +204,14 @@ export default function RegisterPage() {
 
         {method === 'email' ? (
           <div className="space-y-2">
-            <Label htmlFor="reg-email">QQ 号</Label>
-            <QQEmailField
+            <Label htmlFor="reg-email">邮箱地址</Label>
+            <EmailField
               id="reg-email"
               value={email}
               onChange={setEmail}
-              onDomain={(info) => setEmailValid(info.valid)}
+              onValidChange={(info) => setEmailValid(info.valid)}
               statusMode="register"
-              placeholder="请输入 5-11 位 QQ 号"
+              placeholder="请输入邮箱地址，例如 name@example.com"
             />
           </div>
         ) : (
@@ -297,7 +297,7 @@ export default function RegisterPage() {
         {method === 'email' && mailConfigured === false && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-300/20 bg-amber-400/[0.08] p-3 text-[11.5px] leading-relaxed text-amber-200/90">
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-            平台尚未完成 QQ 邮箱发信配置，暂时无法发送邮箱验证码。可改用手机号注册，或联系管理员完成邮箱配置。
+            平台尚未完成邮箱发信配置，暂时无法发送邮箱验证码。可改用手机号注册，或联系管理员完成邮箱配置。
           </div>
         )}
 
