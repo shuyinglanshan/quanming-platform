@@ -2,6 +2,7 @@ import express from 'express';
 import { db, save, uid, findUserById, publicUser } from '../lib/db.js';
 import { requireStaff, requirePermission } from '../lib/auth.js';
 import { paginate, timeBucket } from '../lib/util.js';
+import { getDb } from '../lib/sqlite.js';
 import { shapeClaim } from './claims.js';
 import { shapeName } from './names.js';
 import { shapeAppeal } from './appeals.js';
@@ -23,6 +24,37 @@ router.get('/stats', (req, res) => {
   const appeals = db.appeals;
   const logs = db.logs;
 
+  /**
+   * 平台趋势：直接查数据库做按日聚合
+   *
+   * 此前基于内存中的 db.logs 统计，但日志有 MAX_LOGS 上限会被裁剪，
+   * 导致「访问量」等数字比实际偏小、与真实数据不符。
+   * 改为直接对 access_logs 表做 SQL 聚合，保证统计口径与数据库一致。
+   */
+  const conn = getDb();
+  const startDay = new Date(now - 13 * day);
+  const startKey = timeBucket(startDay.getTime());
+
+  const dayRows = (sql) => conn.prepare(sql).all(startKey);
+  const toMap = (rows) => Object.fromEntries(rows.map((r) => [r.k, Number(r.c) || 0]));
+
+  const usersByDay = toMap(dayRows(`SELECT substr(created_at,1,10) k, COUNT(*) c FROM users WHERE deleted=0 AND substr(created_at,1,10) >= ? GROUP BY k`));
+  const claimsByDay = toMap(dayRows(`SELECT substr(created_at,1,10) k, COUNT(*) c FROM claims WHERE substr(created_at,1,10) >= ? GROUP BY k`));
+  const approvedByDay = toMap(dayRows(`SELECT substr(reviewed_at,1,10) k, COUNT(*) c FROM claims WHERE status='approved' AND reviewed_at IS NOT NULL AND substr(reviewed_at,1,10) >= ? GROUP BY k`));
+  const rejectedByDay = toMap(dayRows(`SELECT substr(reviewed_at,1,10) k, COUNT(*) c FROM claims WHERE status='rejected' AND reviewed_at IS NOT NULL AND substr(reviewed_at,1,10) >= ? GROUP BY k`));
+  const appealsByDay = toMap(dayRows(`SELECT substr(created_at,1,10) k, COUNT(*) c FROM appeals WHERE substr(created_at,1,10) >= ? GROUP BY k`));
+  // 访问量从日志表统计（即使内存缓存被裁剪，数据库仍保留完整历史）
+  const visitsByDay = toMap(
+    conn
+      .prepare(
+        `SELECT date(ts/1000,'unixepoch','localtime') AS k, COUNT(*) AS c
+         FROM access_logs
+         WHERE date(ts/1000,'unixepoch','localtime') >= ?
+         GROUP BY k`,
+      )
+      .all(startKey),
+  );
+
   const days = [];
   for (let i = 13; i >= 0; i -= 1) {
     const d = new Date(now - i * day);
@@ -30,21 +62,29 @@ router.get('/stats', (req, res) => {
     days.push({
       date: key,
       label: key.slice(5),
-      users: users.filter((u) => timeBucket(new Date(u.createdAt).getTime()) === key).length,
-      claims: claims.filter((c) => timeBucket(new Date(c.createdAt).getTime()) === key).length,
-      approved: claims.filter((c) => c.reviewedAt && timeBucket(new Date(c.reviewedAt).getTime()) === key && c.status === 'approved').length,
-      rejected: claims.filter((c) => c.reviewedAt && timeBucket(new Date(c.reviewedAt).getTime()) === key && c.status === 'rejected').length,
-      appeals: appeals.filter((a) => timeBucket(new Date(a.createdAt).getTime()) === key).length,
-      visits: logs.filter((l) => timeBucket(l.ts) === key).length,
+      users: usersByDay[key] || 0,
+      claims: claimsByDay[key] || 0,
+      approved: approvedByDay[key] || 0,
+      rejected: rejectedByDay[key] || 0,
+      appeals: appealsByDay[key] || 0,
+      visits: visitsByDay[key] || 0,
     });
   }
 
-  const searchMap = {};
-  for (const s of db.searches) searchMap[s.q] = (searchMap[s.q] || 0) + 1;
-  const topSearches = Object.entries(searchMap)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([q, count]) => ({ q, count }));
+  /**
+   * 搜索热词：直接对 searches 表做 GROUP BY 聚合
+   *
+   * 此前基于内存 db.searches（启动时只加载最近 2000 条），
+   * 历史累计的热词会被漏掉，与数据库真实数据不符。
+   */
+  const topSearches = conn
+    .prepare(
+      `SELECT q, COUNT(*) AS count FROM searches
+       WHERE q IS NOT NULL AND q <> ''
+       GROUP BY q ORDER BY count DESC, q ASC LIMIT 10`,
+    )
+    .all()
+    .map((r) => ({ q: r.q, count: Number(r.count) || 0 }));
 
   const approvedClaims = claims.filter((c) => c.status === 'approved');
   const avgReview = approvedClaims.length

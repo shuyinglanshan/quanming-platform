@@ -74,7 +74,8 @@ export default function HomePage() {
 
   useEffect(() => {
     api.get<Overview>('/names/stats/overview').then(setOverview).catch(() => {});
-    api.get<{ items: { id: string; name: string; views: number }[] }>('/names/hot?limit=6')
+    // 热门圈名：仅展示浏览量排名前 5
+    api.get<{ items: { id: string; name: string; views: number }[] }>('/names/hot?limit=5')
       .then((res) => setHot(res.items.filter((i) => i.views > 0)))
       .catch(() => setHot([]));
   }, []);
@@ -155,7 +156,7 @@ export default function HomePage() {
             {hot.length > 0 && (
               <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-500">
                 <span>热门：</span>
-                {hot.map((item, i) => (
+                {hot.slice(0, 5).map((item, i) => (
                   <button
                     key={item.id}
                     onClick={() => {

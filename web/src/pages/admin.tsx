@@ -127,41 +127,16 @@ export default function AdminPage() {
   }, [load]);
 
   /**
-   * 概览页自动同步
-   * 前台搜索会实时写入搜索日志，但后台此前只在进入页面时拉取一次，
-   * 导致「搜索热词」长时间不更新。这里改为可见时每 30s 静默刷新。
-   * 只在 overview 页签 + 页面可见时轮询，切到其他面板或隐藏标签页即停止，避免无谓请求。
+   * 概览数据直接读取数据库，不做轮询
+   *
+   * 说明：统计全部改为服务端直接查库（SQL 聚合），每次进入概览页
+   * 或点击「刷新数据」都会拿到与数据库一致的实时数字。
+   * 轮询只会在后台常驻时不断请求，且容易让人误以为数字「自己变了」，
+   * 因此这里移除定时刷新，改为按需加载。
    */
   useEffect(() => {
     if (tab !== 'overview') return;
-    let timer: number | null = null;
-
-    const start = () => {
-      if (timer) return;
-      // 15 秒轮询：兼顾及时性与请求量
-      timer = window.setInterval(() => load(true, true), 15000);
-    };
-    const stop = () => {
-      if (timer) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
-    const onVisibility = () => {
-      if (document.hidden) {
-        stop();
-      } else {
-        load(true, true);
-        start();
-      }
-    };
-
-    if (!document.hidden) start();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
+    load(true, true);
   }, [tab, load]);
 
   const nav = NAV.filter((n) => !n.permission || can(n.permission));
@@ -370,13 +345,12 @@ function Overview({
         <div className="glass rounded-2xl p-5">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-[14px] font-medium text-white">搜索热词</h3>
-            <span className="flex items-center gap-1 text-[10px] text-emerald-300/80">
-              <span className="size-1.5 animate-pulse rounded-full bg-emerald-400" />
-              实时
+            <span className="rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-slate-400">
+              数据库实时读取
             </span>
           </div>
           <p className="mt-0.5 mb-4 text-[11.5px] text-slate-500">
-            用户在前台检索最多的关键词 · 每 30 秒自动同步
+            全部历史搜索按次数聚合排名（Top 10）
           </p>
           <div className="space-y-1.5">
             {stats.topSearches.length === 0 && <p className="text-[12px] text-slate-500">暂无搜索记录</p>}
