@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Scale,
   Trash2,
   UserCheck,
   UserCog,
@@ -50,6 +51,7 @@ import { api, ApiError, type Role, type User } from '@/lib/api';
 import { cn, formatDate, initials, relativeTime, statusTone, STATUS_TEXT, ROLE_META } from '@/lib/utils';
 
 type Row = User & {
+  courtPermission?: boolean;
   maskedEmail: string;
   lastIp: string;
   loginCount: number;
@@ -462,6 +464,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
                   { k: '最近 IP', v: detail.lastIp || '—' },
                   { k: '提交申请', v: `${detail.claimsTotal} 条` },
                   { k: '提交申诉', v: `${detail.appealsTotal ?? 0} 条` },
+                  { k: '小法庭投票', v: detail.courtPermission === false ? '已收回' : '正常' },
                 ].map((i) => (
                   <div key={i.k} className="rounded-xl border border-white/8 bg-white/[0.04] p-2.5">
                     <div className="text-[10.5px] text-slate-500">{i.k}</div>
@@ -513,6 +516,26 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
                 <Button size="sm" variant="secondary" onClick={() => openBindEditor(detail)}>
                   <Link2 className="size-3.5" /> 代改社交绑定
                 </Button>
+                {detail.role === 'user' && (
+                  <Button
+                    size="sm"
+                    variant={detail.courtPermission === false ? 'destructive' : 'secondary'}
+                    onClick={async () => {
+                      try {
+                        const next = detail.courtPermission === false;
+                        await api.patch(`/admin/users/${detail.id}/court-permission`, { allow: next });
+                        toast.success(next ? '已恢复小法庭投票权限' : '已收回小法庭投票权限');
+                        setDetail({ ...detail, courtPermission: next } as any);
+                        load();
+                      } catch (err) {
+                        toast.error(err instanceof ApiError ? err.message : '操作失败');
+                      }
+                    }}
+                  >
+                    <Scale className="size-3.5" />
+                    {detail.courtPermission === false ? '恢复投票权' : '收回投票权'}
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"

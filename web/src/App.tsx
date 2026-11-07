@@ -11,6 +11,7 @@ import NameDetailPage from './pages/name-detail';
 import NotificationsPage from './pages/notifications';
 import NotFoundPage from './pages/not-found';
 import FeedbackPage from './pages/feedback';
+import { CourtListPage, CourtDetailPage } from './pages/court';
 import RequireAuth from './components/require-auth';
 
 function ScrollToTop() {
@@ -31,6 +32,8 @@ export default function App() {
           <Route path="/names/:id" element={<NameDetailPage />} />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/court" element={<CourtListPage />} />
+          <Route path="/court/:id" element={<CourtDetailPage />} />
           <Route
             path="/me"
             element={

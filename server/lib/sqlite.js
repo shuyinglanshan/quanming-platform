@@ -57,6 +57,10 @@ export function getDb() {
   if (!userCols.includes('avatar_url')) db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
   if (!userCols.includes('avatar_sha256')) db.exec('ALTER TABLE users ADD COLUMN avatar_sha256 TEXT');
   if (!userCols.includes('title')) db.exec('ALTER TABLE users ADD COLUMN title TEXT');
+  // 小法庭投票权限：1 允许（默认），0 已被管理员收回
+  if (!userCols.includes('court_permission')) {
+    db.exec('ALTER TABLE users ADD COLUMN court_permission INTEGER DEFAULT 1');
+  }
 
   instance = db;
   if (isNew) {

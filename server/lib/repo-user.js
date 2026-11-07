@@ -17,7 +17,7 @@ import {
 const ALLOWED_FIELDS = new Set([
   'email', 'emailDomain', 'phone', 'username', 'nickname', 'passwordHash', 'role', 'status',
   'bio', 'avatarHue', 'banReason', 'lastLoginAt', 'lastIp', 'loginCount', 'deleted',
-  'bindings', 'bindingChanges', 'stats', 'avatarUrl', 'avatarSha256', 'title',
+  'bindings', 'bindingChanges', 'stats', 'avatarUrl', 'avatarSha256', 'title', 'courtPermission',
 ]);
 
 const FIELD_MAP = {

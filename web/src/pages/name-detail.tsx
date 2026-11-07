@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Sparkles,
   TriangleAlert,
+  ImagePlus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -196,6 +197,44 @@ export default function NameDetailPage() {
           <JoinGroupButton variant="outline" className="h-10" />
         </div>
       </div>
+
+      {/* 归属证明材料（用户提交审核时上传） */}
+      {data.evidence && data.evidence.length > 0 && (
+        <div className="glass-soft mt-4 rounded-2xl p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-[13.5px] font-medium text-white">
+              <ImagePlus className="size-4 text-violet-200" />
+              归属证明材料
+            </h3>
+            <span className="text-[11px] text-slate-500">共 {data.evidence.length} 张 · 点击查看大图</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
+            {data.evidence.map((img, i) => (
+              <a
+                key={img.url + i}
+                href={img.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]"
+              >
+                <img
+                  src={img.url}
+                  alt={img.name || `材料${i + 1}`}
+                  loading="lazy"
+                  className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+                />
+                <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                <span className="pointer-events-none absolute bottom-1.5 left-2 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                  {img.name || `材料 ${i + 1}`}
+                </span>
+              </a>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
+            以上材料由归属方在提交审核时上传，经人工复核通过后展示。
+          </p>
+        </div>
+      )}
 
       {/* 说明 */}
       <div className="glass-soft mt-4 grid gap-3 rounded-2xl p-5 sm:grid-cols-2">

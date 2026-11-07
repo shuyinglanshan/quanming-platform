@@ -19,6 +19,7 @@ import {
   Image as ImageIcon,
   MessageSquare,
   Crown,
+  Scale,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +35,7 @@ import { SecurityPanel } from '@/components/admin/security-panel';
 import { AvatarsPanel } from '@/components/admin/avatars-panel';
 import { FeedbackPanel } from '@/components/admin/feedback-panel';
 import { RolesPanel } from '@/components/admin/roles-panel';
+import { CourtsPanel } from '@/components/admin/courts-panel';
 import { StatCard, TrendChart, type TrendPoint } from '@/components/admin/trend-chart';
 import { api, ApiError, type Claim, type Appeal } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -87,6 +89,7 @@ const NAV: NavItem[] = [
   { key: 'claims', label: '归属审核', icon: ShieldCheck, permission: 'review', badge: (s) => s?.cards.pending ?? 0 },
   { key: 'appeals', label: '归属申诉', icon: Gavel, permission: 'appeal', badge: (s) => s?.cards.appealsPending ?? 0 },
   { key: 'avatars', label: '头像审核', icon: ImageIcon, permission: 'users', badge: (s) => s?.cards.avatarsPending ?? 0 },
+  { key: 'courts', label: '小法庭', icon: Scale, permission: 'appeal' },
   { key: 'feedback', label: '反馈处理', icon: MessageSquare, permission: 'feedback', badge: (s) => s?.cards.feedbackPending ?? 0 },
   { key: 'users', label: '用户与权限', icon: Users, permission: 'users' },
   { key: 'roles', label: '角色与功能权限', icon: Crown, permission: 'users' },
@@ -135,7 +138,8 @@ export default function AdminPage() {
 
     const start = () => {
       if (timer) return;
-      timer = window.setInterval(() => load(true, true), 30000);
+      // 15 秒轮询：兼顾及时性与请求量
+      timer = window.setInterval(() => load(true, true), 15000);
     };
     const stop = () => {
       if (timer) {
@@ -285,6 +289,7 @@ export default function AdminPage() {
           {tab === 'claims' && <ClaimsPanel onChanged={() => load(true)} />}
           {tab === 'appeals' && <AppealsPanel onChanged={() => load(true)} />}
           {tab === 'avatars' && <AvatarsPanel onChanged={() => load(true)} />}
+          {tab === 'courts' && <CourtsPanel onChanged={() => load(true)} />}
           {tab === 'feedback' && <FeedbackPanel onChanged={() => load(true)} />}
           {tab === 'roles' && <RolesPanel />}
           {tab === 'users' && <UsersPanel onChanged={() => load(true)} currentUserId={user?.id} />}

@@ -29,6 +29,7 @@ import notificationRoutes from './routes/notifications.js';
 import adminRoutes from './routes/admin.js';
 import adminFeedbackRoutes from './routes/admin-feedback.js';
 import feedbackRoutes from './routes/feedback.js';
+import courtRoutes, { settleCourt } from './routes/courts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
@@ -83,6 +84,7 @@ app.use('/api/appeals', appealRoutes);
 app.use('/api/me', meRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/court', courtRoutes);
 app.use('/api/admin', adminFeedbackRoutes);
 app.use('/api/admin', adminRoutes);
 
@@ -138,6 +140,8 @@ if (fs.existsSync(WEB_DIST)) {
     '/register',
     '/about',
     '/feedback',
+    '/court',
+    /^\/court\/[A-Za-z0-9_-]{1,64}$/,
     '/me',
     '/notifications',
     '/admin',
@@ -295,6 +299,28 @@ function bootstrap() {
   }
 
   const created = ensureFirstAdmin();
+
+  /**
+   * 小法庭自动结算
+   * 每分钟检查一次已到投票截止时间且仍在投票中的案件，按票数自动判决。
+   * 放在服务端定时任务而非请求触发，保证即使无人访问也会按时结案。
+   */
+  const settleExpiredCourts = () => {
+    try {
+      const now = Date.now();
+      const expired = db.courts.filter(
+        (c) => c.status === 'voting' && c.votingEndsAt && new Date(c.votingEndsAt).getTime() <= now,
+      );
+      for (const c of expired) {
+        const result = settleCourt(c.id, { by: 'votes' });
+        if (result) console.log(`[court] 自动结算: ${c.nameText} → ${result.verdictReason}`);
+      }
+    } catch (err) {
+      console.error('[court] 自动结算失败:', err.message);
+    }
+  };
+  setInterval(settleExpiredCourts, 60_000).unref();
+  settleExpiredCourts();
 
   app.listen(PORT, HOST, () => {
     const sec = securitySnapshot();

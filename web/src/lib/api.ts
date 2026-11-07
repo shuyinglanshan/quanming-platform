@@ -18,10 +18,12 @@ export type User = {
   bindings: Record<string, { handle: string; boundAt: string; verified: boolean } | null>;
   stats: { claims?: number; approved?: number; rejected?: number };
   bindingUsage?: { month: string; used: number; limit: number; remaining: number; resetAt: string };
+  courtPermission?: boolean;
   permissions?: string[];
 };
 
 export type NameItem = {
+  evidence?: { url: string; name: string; size: number; mime: string }[];
   id: string;
   name: string;
   description: string;
@@ -249,4 +251,46 @@ export type Feedback = {
     avatarUrl: string;
     avatarHue: number;
   } | null;
+};
+
+/* ---------------- 小法庭 ---------------- */
+export type CourtSide = 'claimant' | 'respondent';
+
+export type CourtStatement = {
+  id: string;
+  side: CourtSide;
+  round: number;
+  content: string;
+  images: { url: string; name: string; size: number; mime: string }[];
+  createdAt: string;
+  user: { id: string; nickname: string; avatarHue: number; avatarUrl: string } | null;
+};
+
+export type CourtVoteDetail = {
+  id: string;
+  side: CourtSide;
+  reason: string;
+  createdAt: string;
+  user: { id: string; nickname: string; avatarHue: number; avatarUrl: string } | null;
+};
+
+export type Court = {
+  id: string;
+  nameId: string;
+  nameText: string;
+  status: 'pending' | 'running' | 'voting' | 'closed';
+  createdAt: string;
+  startedAt: string | null;
+  votingEndsAt: string | null;
+  closedAt: string | null;
+  winnerId: string | null;
+  verdict: 'votes' | 'admin' | null;
+  verdictReason: string;
+  judgedBy: string | null;
+  claimant: { id: string; nickname: string; avatarHue: number; avatarUrl: string; title: string } | null;
+  respondent: { id: string; nickname: string; avatarHue: number; avatarUrl: string; title: string } | null;
+  votes: { claimant: number; respondent: number; total: number };
+  viewer: { isClaimant: boolean; isRespondent: boolean; votedSide: CourtSide | null } | null;
+  statements?: CourtStatement[];
+  voteDetails?: CourtVoteDetail[];
 };

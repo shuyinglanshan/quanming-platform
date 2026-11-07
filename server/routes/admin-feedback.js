@@ -5,6 +5,7 @@ import { sanitizeText, paginate } from '../lib/util.js';
 import { eventLog } from '../lib/logger.js';
 import { notifyUser } from '../lib/notify.js';
 import { shapeFeedback } from './feedback.js';
+import { shapeCourt } from './courts.js';
 
 const router = express.Router();
 
@@ -181,6 +182,48 @@ router.put('/roles/:role/features', requirePermission('users'), (req, res) => {
 
   eventLog(req, '更新角色功能权限', `${role} → ${clean.join(',') || '（仅基础权限）'}`);
   res.json({ ok: true, role, features: clean });
+});
+
+/* ================= 小法庭管理 ================= */
+router.get('/courts', requirePermission('appeal'), (req, res) => {
+  const { status = 'all', page = 1, pageSize = 10 } = req.query;
+  let list = [...db.courts];
+  if (status !== 'all') list = list.filter((c) => c.status === status);
+  const order = { voting: 0, running: 1, pending: 2, closed: 3 };
+  list.sort((a, b) => (order[a.status] - order[b.status]) || (new Date(b.createdAt) - new Date(a.createdAt)));
+
+  const result = paginate(list, page, pageSize);
+  res.json({
+    ...result,
+    items: result.items.map((c) => shapeCourt(c)),
+    counts: {
+      all: db.courts.length,
+      voting: db.courts.filter((c) => c.status === 'voting').length,
+      running: db.courts.filter((c) => c.status === 'running').length,
+      closed: db.courts.filter((c) => c.status === 'closed').length,
+    },
+  });
+});
+
+router.post('/courts/:id/override', requirePermission('appeal'), (req, res) => {
+  const c = db.courts.find((x) => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: '小法庭不存在' });
+  if (c.status !== 'closed') return res.status(400).json({ error: '只能对已结案的判决改判' });
+
+  const { winnerId, reason } = req.body || {};
+  if (![c.claimantId, c.respondentId].includes(winnerId)) {
+    return res.status(400).json({ error: '胜出方必须是争议双方之一' });
+  }
+  const safeReason = sanitizeText(reason, 500);
+  if (safeReason.length < 2) return res.status(400).json({ error: '请填写改判理由' });
+
+  c.winnerId = winnerId;
+  c.verdict = 'admin';
+  c.verdictReason = safeReason;
+  c.judgedBy = req.user.nickname;
+  save('courts');
+  eventLog(req, '小法庭改判', `${c.nameText} → ${winnerId}`);
+  res.json({ ok: true });
 });
 
 export default router;

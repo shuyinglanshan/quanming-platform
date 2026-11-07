@@ -56,6 +56,7 @@ export function mapUser(row) {
     avatarUrl: row.avatar_url || '',
     avatarSha256: row.avatar_sha256 || '',
     title: row.title || '',
+    courtPermission: row.court_permission === 0 ? false : true,
   };
 }
 
@@ -84,6 +85,7 @@ export function toUserRow(u) {
     avatar_url: u.avatarUrl || null,
     avatar_sha256: u.avatarSha256 || null,
     title: u.title || null,
+    court_permission: u.courtPermission === false ? 0 : 1,
   };
 }
 
@@ -93,10 +95,10 @@ export function saveUser(u) {
     .prepare(
       `INSERT INTO users (id,email,email_domain,phone,username,nickname,password_hash,role,status,bio,
         avatar_hue,created_at,last_login_at,login_count,last_ip,bindings,binding_changes,stats,ban_reason,deleted,
-        avatar_url,avatar_sha256,title)
+        avatar_url,avatar_sha256,title,court_permission)
        VALUES (@id,@email,@email_domain,@phone,@username,@nickname,@password_hash,@role,@status,@bio,
         @avatar_hue,@created_at,@last_login_at,@login_count,@last_ip,@bindings,@binding_changes,@stats,@ban_reason,@deleted,
-        @avatar_url,@avatar_sha256,@title)
+        @avatar_url,@avatar_sha256,@title,@court_permission)
        ON CONFLICT(id) DO UPDATE SET
         email=excluded.email, email_domain=excluded.email_domain, phone=excluded.phone,
         username=excluded.username, nickname=excluded.nickname, password_hash=excluded.password_hash,
@@ -104,7 +106,8 @@ export function saveUser(u) {
         last_login_at=excluded.last_login_at, login_count=excluded.login_count, last_ip=excluded.last_ip,
         bindings=excluded.bindings, binding_changes=excluded.binding_changes, stats=excluded.stats,
         ban_reason=excluded.ban_reason, deleted=excluded.deleted,
-        avatar_url=excluded.avatar_url, avatar_sha256=excluded.avatar_sha256, title=excluded.title`,
+        avatar_url=excluded.avatar_url, avatar_sha256=excluded.avatar_sha256, title=excluded.title,
+        court_permission=excluded.court_permission`,
     )
     .run(r);
 }
@@ -781,4 +784,119 @@ export function saveFeedback(f) {
 
 export function deleteFeedback(id) {
   getDb().prepare('DELETE FROM feedback WHERE id=?').run(id);
+}
+
+/* ================= courts ================= */
+export function mapCourt(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    nameId: row.name_id,
+    nameText: row.name_text,
+    appealId: row.appeal_id,
+    claimantId: row.claimant_id,
+    respondentId: row.respondent_id,
+    status: row.status,
+    startedAt: row.started_at,
+    votingEndsAt: row.voting_ends_at,
+    closedAt: row.closed_at,
+    winnerId: row.winner_id,
+    verdict: row.verdict,
+    verdictReason: row.verdict_reason,
+    judgedBy: row.judged_by,
+    createdAt: row.created_at,
+  };
+}
+
+export function saveCourt(c) {
+  getDb()
+    .prepare(
+      `INSERT INTO courts (id,name_id,name_text,appeal_id,claimant_id,respondent_id,status,started_at,voting_ends_at,closed_at,winner_id,verdict,verdict_reason,judged_by,created_at)
+       VALUES (@id,@name_id,@name_text,@appeal_id,@claimant_id,@respondent_id,@status,@started_at,@voting_ends_at,@closed_at,@winner_id,@verdict,@verdict_reason,@judged_by,@created_at)
+       ON CONFLICT(id) DO UPDATE SET
+        status=excluded.status, started_at=excluded.started_at, voting_ends_at=excluded.voting_ends_at,
+        closed_at=excluded.closed_at, winner_id=excluded.winner_id, verdict=excluded.verdict,
+        verdict_reason=excluded.verdict_reason, judged_by=excluded.judged_by`,
+    )
+    .run({
+      id: c.id,
+      name_id: c.nameId,
+      name_text: c.nameText,
+      appeal_id: c.appealId || null,
+      claimant_id: c.claimantId,
+      respondent_id: c.respondentId || null,
+      status: c.status,
+      started_at: c.startedAt || null,
+      voting_ends_at: c.votingEndsAt || null,
+      closed_at: c.closedAt || null,
+      winner_id: c.winnerId || null,
+      verdict: c.verdict || null,
+      verdict_reason: c.verdictReason || '',
+      judged_by: c.judgedBy || null,
+      created_at: c.createdAt,
+    });
+}
+
+/* ================= court_statements ================= */
+export function mapCourtStatement(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    courtId: row.court_id,
+    userId: row.user_id,
+    side: row.side,
+    round: int(row.round),
+    content: row.content,
+    images: J.parse(row.images, []),
+    createdAt: row.created_at,
+  };
+}
+
+export function saveCourtStatement(st) {
+  getDb()
+    .prepare(
+      `INSERT INTO court_statements (id,court_id,user_id,side,round,content,images,created_at)
+       VALUES (@id,@court_id,@user_id,@side,@round,@content,@images,@created_at)
+       ON CONFLICT(id) DO NOTHING`,
+    )
+    .run({
+      id: st.id,
+      court_id: st.courtId,
+      user_id: st.userId,
+      side: st.side,
+      round: int(st.round) || 1,
+      content: st.content,
+      images: J.stringify(st.images || []),
+      created_at: st.createdAt,
+    });
+}
+
+/* ================= court_votes ================= */
+export function mapCourtVote(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    courtId: row.court_id,
+    userId: row.user_id,
+    side: row.side,
+    reason: row.reason || '',
+    createdAt: row.created_at,
+  };
+}
+
+export function saveCourtVote(v) {
+  getDb()
+    .prepare(
+      `INSERT INTO court_votes (id,court_id,user_id,side,reason,created_at)
+       VALUES (@id,@court_id,@user_id,@side,@reason,@created_at)
+       ON CONFLICT(court_id,user_id) DO UPDATE SET side=excluded.side, reason=excluded.reason`,
+    )
+    .run({
+      id: v.id,
+      court_id: v.courtId,
+      user_id: v.userId,
+      side: v.side,
+      reason: v.reason || '',
+      created_at: v.createdAt,
+    });
 }

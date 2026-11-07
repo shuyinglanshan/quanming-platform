@@ -343,3 +343,54 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_status_time ON feedback(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at DESC);
+
+-- ============ 小法庭（归属争议投票裁决） ============
+CREATE TABLE IF NOT EXISTS courts (
+  id              TEXT PRIMARY KEY,
+  name_id         TEXT NOT NULL,
+  name_text       TEXT NOT NULL,
+  appeal_id       TEXT,
+  -- 争议双方
+  claimant_id     TEXT NOT NULL,      -- 主张方（申诉人）
+  respondent_id   TEXT,               -- 应诉方（原归属者）
+  -- 状态：pending(待启动) | running(提交材料中) | voting(投票中) | closed(已判决)
+  status          TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','running','voting','closed')),
+  -- 时间安排
+  started_at      TEXT,
+  voting_ends_at  TEXT,               -- 投票截止时间
+  closed_at       TEXT,
+  -- 结果
+  winner_id       TEXT,               -- 胜出方用户 ID
+  verdict         TEXT,               -- votes | admin（系统按票 / 管理员改判）
+  verdict_reason  TEXT,
+  judged_by       TEXT,               -- 管理员改判时的操作者
+  created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_courts_status ON courts(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_courts_name   ON courts(name_id);
+
+-- 双方提交的材料与理由（轮番提交）
+CREATE TABLE IF NOT EXISTS court_statements (
+  id          TEXT PRIMARY KEY,
+  court_id    TEXT NOT NULL REFERENCES courts(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL,
+  side        TEXT NOT NULL,          -- claimant | respondent
+  round       INTEGER NOT NULL DEFAULT 1,
+  content     TEXT NOT NULL,
+  images      TEXT DEFAULT '[]',      -- 图片 JSON
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_court_statements_court ON court_statements(court_id, created_at);
+
+-- 用户投票
+CREATE TABLE IF NOT EXISTS court_votes (
+  id          TEXT PRIMARY KEY,
+  court_id    TEXT NOT NULL REFERENCES courts(id) ON DELETE CASCADE,
+  user_id     TEXT NOT NULL,
+  side        TEXT NOT NULL,          -- claimant | respondent
+  reason      TEXT DEFAULT '',        -- 支持理由
+  created_at  TEXT NOT NULL,
+  UNIQUE(court_id, user_id)           -- 一人一票
+);
+CREATE INDEX IF NOT EXISTS idx_court_votes_court ON court_votes(court_id, side);

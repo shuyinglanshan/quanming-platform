@@ -279,6 +279,32 @@ router.put('/users/:id/bindings', requirePermission('users'), (req, res) => {
   res.json({ user: publicUser(user) });
 });
 
+/** 设置用户的小法庭投票权限（封禁/开启） */
+router.patch('/users/:id/court-permission', requirePermission('users'), (req, res) => {
+  const user = findUserById(req.params.id);
+  if (!user || user.deleted) return res.status(404).json({ error: '用户不存在' });
+  if (user.role !== 'user') {
+    return res.status(400).json({ error: '仅可对普通用户设置小法庭投票权限' });
+  }
+
+  const allow = Boolean(req.body?.allow);
+  user.courtPermission = allow;
+  save('users');
+
+  notifyUser(user.id, {
+    category: 'system',
+    level: allow ? 'success' : 'warning',
+    title: allow ? '小法庭投票权限已恢复' : '小法庭投票权限已被收回',
+    content: allow
+      ? '管理员已恢复你的小法庭投票权限，你可以继续参与投票。'
+      : '管理员已收回你的小法庭投票权限，你将无法在小法庭投票。如有疑问请联系管理员。',
+    link: '/court',
+  });
+
+  eventLog(req, allow ? '恢复小法庭投票权限' : '收回小法庭投票权限', user.username || user.email);
+  res.json({ ok: true, courtPermission: allow });
+});
+
 /** 管理员重置用户本月的绑定修改次数 */
 router.post('/users/:id/bindings/reset-quota', requirePermission('users'), (req, res) => {
   const user = findUserById(req.params.id);

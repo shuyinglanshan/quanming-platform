@@ -4,8 +4,19 @@ import { paginate } from '../lib/util.js';
 
 const router = express.Router();
 
-export function shapeName(n) {
+export function shapeName(n, { withEvidence = false } = {}) {
   const owner = db.users.find((u) => u.id === n.ownerId);
+
+  // 归属证明材料：来自该圈名对应的通过审核的申请记录
+  let evidence = [];
+  if (withEvidence) {
+    const claim =
+      (n.claimId && db.claims.find((c) => c.id === n.claimId)) ||
+      db.claims.find((c) => c.nameId === n.id && c.status === 'approved') ||
+      null;
+    evidence = Array.isArray(claim?.images) ? claim.images : [];
+  }
+
   return {
     id: n.id,
     name: n.name,
@@ -28,6 +39,8 @@ export function shapeName(n) {
         }
       : null,
     openAppeals: db.appeals.filter((a) => a.nameId === n.id && a.status === 'pending').length,
+    // 仅详情页返回材料图片，列表接口不返回以免体积过大
+    ...(withEvidence ? { evidence } : {}),
   };
 }
 
@@ -125,7 +138,7 @@ router.get('/:id', (req, res) => {
   name.views = (name.views || 0) + 1;
   // 浏览计数属于高频可容忍延迟写入，合并 3 秒落库，避免每个请求重写整张 names 表
   saveDebounced('names');
-  res.json({ name: shapeName(name) });
+  res.json({ name: shapeName(name, { withEvidence: true }) });
 });
 
 export default router;

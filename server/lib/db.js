@@ -84,6 +84,9 @@ export const db = {
   captchas: [],
   avatarRequests: [],
   feedback: [],
+  courts: [],
+  courtStatements: [],
+  courtVotes: [],
   security: {
     blockedIps: [],
     tempBlocks: [],
@@ -120,6 +123,10 @@ function loadAll() {
     .all()
     .map(repo.mapNotification);
   db.logs = conn.prepare('SELECT * FROM access_logs ORDER BY ts DESC LIMIT 2000').all().map(repo.mapLog);
+  db.courts = conn.prepare('SELECT * FROM courts ORDER BY created_at DESC LIMIT 2000').all().map(repo.mapCourt);
+  db.courtStatements = conn.prepare('SELECT * FROM court_statements ORDER BY created_at ASC LIMIT 20000').all().map(repo.mapCourtStatement);
+  db.courtVotes = conn.prepare('SELECT * FROM court_votes ORDER BY created_at ASC LIMIT 50000').all().map(repo.mapCourtVote);
+
   db.feedback = conn
     .prepare('SELECT * FROM feedback ORDER BY created_at DESC LIMIT 5000')
     .all()
@@ -235,7 +242,7 @@ const debounceTimers = new Map();
 const PERSIST_TABLES = [
   'users', 'sessions', 'names', 'claims', 'appeals', 'notifications', 'codes', 'captchas',
   'logs', 'searches', 'settings', 'blocked_ips', 'temp_blocks', 'security_events',
-  'register_attempts', 'login_attempts', 'avatar_requests', 'feedback',
+  'register_attempts', 'login_attempts', 'avatar_requests', 'feedback', 'courts', 'court_statements', 'court_votes',
 ];
 
 export function markDirty(table) {
@@ -287,6 +294,9 @@ export function persistTables(tables) {
     if (tables.has('captchas')) repo.replaceCaptchas(db.captchas);
     if (tables.has('avatar_requests')) for (const a of db.avatarRequests) repo.saveAvatarRequest(a);
     if (tables.has('feedback')) for (const f of db.feedback) repo.saveFeedback(f);
+    if (tables.has('courts')) for (const c of db.courts) repo.saveCourt(c);
+    if (tables.has('court_statements')) for (const st of db.courtStatements) repo.saveCourtStatement(st);
+    if (tables.has('court_votes')) for (const v of db.courtVotes) repo.saveCourtVote(v);
     if (tables.has('logs')) for (const l of db.logs) repo.saveLog(l);
     if (tables.has('searches')) repo.replaceSearches(db.searches);
     if (tables.has('settings')) for (const [k, v] of Object.entries(db.settings)) repo.saveSettings(k, v);
@@ -386,6 +396,7 @@ export function publicUser(u) {
     avatarHue: u.avatarHue ?? 260,
     avatarUrl: u.avatarUrl || '',
     title: u.title || '',
+    courtPermission: u.courtPermission !== false,
     createdAt: u.createdAt,
     lastLoginAt: u.lastLoginAt || null,
     bindings: u.bindings || {},
