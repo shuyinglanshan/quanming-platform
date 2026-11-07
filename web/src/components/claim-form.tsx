@@ -64,11 +64,11 @@ export function ClaimForm({
         <Input
           id="claim-name"
           value={name}
-          onChange={(e) => setName(e.target.value.slice(0, 200))}
+          onChange={(e) => setName(e.target.value.slice(0, 20))}
           placeholder="例如：疏影阑珊"
-          maxLength={200}
+          maxLength={20}
         />
-        <p className="text-[11px] text-slate-500">至少 2 个字符，长度不限；支持中英文、数字与常见符号。</p>
+        <p className="text-[11px] text-slate-500">1-20 个字符，支持中英文、数字与常见符号。</p>
       </div>
 
       <div className="space-y-2">

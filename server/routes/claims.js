@@ -58,7 +58,7 @@ router.post('/', requireAuth, uploadByteQuota, upload.array('images', 6), (req, 
   // 先对原始输入做完整校验（含控制字符与长度），避免 sanitizeText 静默截断
   const rawName = String(name || '').trim();
   const nameError = validateName(rawName);
-  const safeName = sanitizeText(rawName, 200);
+  const safeName = sanitizeText(rawName, 20);
   if (nameError) return fail(400, { error: nameError });
 
   let images = [];

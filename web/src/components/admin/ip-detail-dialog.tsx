@@ -23,6 +23,9 @@ type LogDetail = {
   };
   ip: {
     ip: string; region: string; kind: string; isPrivate: boolean; isIpv6: boolean;
+    country?: string; province?: string; city?: string; district?: string;
+    isp?: string; org?: string; lat?: number | null; lon?: number | null;
+    source?: string;
     blocked: boolean; blockReason?: string; blockedAt?: string | null;
     tempBlocked: boolean; tempUntil?: number | null; tempReason?: string;
   };
@@ -154,10 +157,56 @@ export function IpDetailDialog({
                 <MapPin className="size-3" /> IP 归属地
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[13.5px] font-medium text-white">{data.ip.region}</span>
+                <span className="text-[13.5px] font-medium text-white">{data.ip.region || '未知'}</span>
                 {data.ip.isPrivate && <Badge variant="warning" className="text-[9.5px]">内网 / 特殊段</Badge>}
                 {data.ip.isIpv6 && <Badge variant="secondary" className="text-[9.5px]">IPv6</Badge>}
+                {data.ip.source === 'api' || data.ip.source === 'cache' ? (
+                  <Badge variant="success" className="text-[9.5px]">精确解析</Badge>
+                ) : null}
               </div>
+
+              {/* 行政区划明细 */}
+              {(data.ip.province || data.ip.city || data.ip.district) && (
+                <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-4">
+                  {[
+                    { k: '国家', v: data.ip.country },
+                    { k: '省份', v: data.ip.province },
+                    { k: '城市', v: data.ip.city },
+                    { k: '区县', v: data.ip.district },
+                  ].filter((i) => i.v).map((i) => (
+                    <div key={i.k}>
+                      <span className="text-slate-500">{i.k}：</span>
+                      <span className="text-slate-200">{i.v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 运营商与坐标 */}
+              {(data.ip.isp || data.ip.org || data.ip.lat != null) && (
+                <div className="mt-2 space-y-0.5 border-t border-white/6 pt-2 text-[11px]">
+                  {data.ip.isp && (
+                    <div><span className="text-slate-500">运营商：</span><span className="text-slate-300">{data.ip.isp}</span></div>
+                  )}
+                  {data.ip.org && data.ip.org !== data.ip.isp && (
+                    <div><span className="text-slate-500">所属机构：</span><span className="text-slate-300">{data.ip.org}</span></div>
+                  )}
+                  {data.ip.lat != null && data.ip.lon != null && (
+                    <div>
+                      <span className="text-slate-500">坐标：</span>
+                      <span className="font-mono text-slate-400">{data.ip.lat.toFixed(4)}, {data.ip.lon.toFixed(4)}</span>
+                      <a
+                        href={`https://www.openstreetmap.org/?mlat=${data.ip.lat}&mlon=${data.ip.lon}#map=11/${data.ip.lat}/${data.ip.lon}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="ml-2 text-violet-300 hover:text-violet-200"
+                      >
+                        查看地图
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* 本次请求 */}

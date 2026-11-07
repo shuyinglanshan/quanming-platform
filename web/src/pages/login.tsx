@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AtSign, CircleAlert, Eye, EyeOff, KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Smartphone, User as UserIcon } from 'lucide-react';
+import { AtSign, CircleAlert, Eye, EyeOff, KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Smartphone, User as UserIcon,
+  Inbox,
+} from 'lucide-react';
 import { AuthShell } from '@/components/auth-shell';
 import { EmailField } from '@/components/email-field';
 import { Button } from '@/components/ui/button';
@@ -39,6 +41,7 @@ export default function LoginPage() {
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sentOnce, setSentOnce] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -104,6 +107,7 @@ export default function LoginPage() {
     try {
       await api.post('/auth/send-code', { email: email.trim(), purpose: 'login' });
       setCountdown(60);
+      setSentOnce(true);
       toast.success('验证码已发送', { description: '请查看你的邮箱（含垃圾箱），10 分钟内有效' });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '验证码发送失败');
@@ -221,6 +225,15 @@ export default function LoginPage() {
                   {countdown > 0 ? `${countdown}s 后重发` : '发送验证码'}
                 </Button>
               </div>
+              {/* 发送成功后常驻提示：邮件可能进垃圾箱 */}
+              {sentOnce && (
+                <div className="flex items-start gap-1.5 rounded-lg border border-sky-300/20 bg-sky-400/[0.07] px-2.5 py-2 text-[11px] leading-relaxed text-sky-200/90">
+                  <Inbox className="mt-0.5 size-3 shrink-0" />
+                  <span>
+                    验证码已发送，请到邮箱查收。<span className="font-medium text-sky-100">如果没收到邮件，请查看垃圾邮件 / 广告邮件文件夹</span>。
+                  </span>
+                </div>
+              )}
             </div>
 
             {mailConfigured === false && (

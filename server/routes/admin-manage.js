@@ -8,6 +8,7 @@ import { notifyUser } from '../lib/notify.js';
 import { shapeAvatarRequest, removeAvatarFile } from '../lib/avatar.js';
 import { updateUser } from '../lib/repo-user.js';
 import { lookupIp } from '../lib/ip-geo.js';
+import { resolveIp } from '../lib/ip-geo-remote.js';
 import { isPermanentlyBlocked, activeTempBlock } from '../lib/guard.js';
 import { hashPassword } from '../lib/password.js';
 import crypto from 'node:crypto';
@@ -644,14 +645,15 @@ router.get('/logs', requirePermission('logs'), (req, res) => {
 });
 
 /* ---------------- 访问日志详情 ---------------- */
-router.get('/logs/:id', requirePermission('logs'), (req, res, next) => {
+router.get('/logs/:id', requirePermission('logs'), async (req, res, next) => {
   // 路由冲突防护：/logs/integrity 是独立端点，不能被 :id 抢先匹配
   if (req.params.id === 'integrity') return next();
 
   const log = db.logs.find((l) => l.id === req.params.id);
   if (!log) return res.status(404).json({ error: '日志不存在或已过期' });
 
-  const geo = lookupIp(log.ip);
+  // 完整地址解析：本地库优先，必要时调用外部 API（带缓存与限流）
+  const geo = await resolveIp(log.ip);
   const perm = isPermanentlyBlocked(log.ip);
   const temp = activeTempBlock(log.ip);
 
@@ -702,11 +704,11 @@ router.get('/logs/:id', requirePermission('logs'), (req, res, next) => {
 });
 
 /* ---------------- 统计某 IP 的概况（风控页用） ---------------- */
-router.get('/ip/:ip/profile', requirePermission('logs'), (req, res) => {
+router.get('/ip/:ip/profile', requirePermission('logs'), async (req, res) => {
   const ip = String(req.params.ip || '').trim();
   if (!ip) return res.status(400).json({ error: '缺少 IP 参数' });
 
-  const geo = lookupIp(ip);
+  const geo = await resolveIp(ip);
   const perm = isPermanentlyBlocked(ip);
   const temp = activeTempBlock(ip);
 

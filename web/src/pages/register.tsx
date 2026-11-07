@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Check, CircleAlert, Eye, EyeOff, Loader2, MailCheck, Smartphone, UserPlus } from 'lucide-react';
+import { Check, CircleAlert, Eye, EyeOff, Loader2, MailCheck, Smartphone, UserPlus,
+  Inbox,
+} from 'lucide-react';
 import { AuthShell } from '@/components/auth-shell';
 import { EmailField } from '@/components/email-field';
 import { SliderCaptcha, type CaptchaState } from '@/components/slider-captcha';
@@ -46,6 +48,7 @@ export default function RegisterPage() {
   const [agree, setAgree] = useState(true);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sentOnce, setSentOnce] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [captcha, setCaptcha] = useState<CaptchaState>({ id: null, verified: false });
   const [captchaKey, setCaptchaKey] = useState(0);
@@ -124,6 +127,7 @@ export default function RegisterPage() {
     try {
       await api.post('/auth/send-code', { email: email.trim(), purpose: 'register' });
       setCountdown(60);
+      setSentOnce(true);
       toast.success('验证码已发送至邮箱', { description: '10 分钟内有效，请注意查收（含垃圾箱）' });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '验证码发送失败');
@@ -291,6 +295,16 @@ export default function RegisterPage() {
                 {countdown > 0 ? `${countdown}s` : '发送'}
               </Button>
             </div>
+            {/* 发送成功后常驻提示：邮件可能进垃圾箱 */}
+            {sentOnce && (
+              <div className="flex items-start gap-1.5 rounded-lg border border-sky-300/20 bg-sky-400/[0.07] px-2.5 py-2 text-[11px] leading-relaxed text-sky-200/90">
+                <Inbox className="mt-0.5 size-3 shrink-0" />
+                <span>
+                  验证码已发送，请到邮箱查收。<span className="font-medium text-sky-100">如果没收到邮件，请查看垃圾邮件 / 广告邮件文件夹</span>，
+                  或将发件人加入白名单后重新发送。
+                </span>
+              </div>
+            )}
           </div>
         )}
 
