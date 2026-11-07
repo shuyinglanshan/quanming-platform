@@ -73,6 +73,8 @@ router.get('/stats', (req, res) => {
     avatarsPending: (db.avatarRequests || []).filter((a) => a.status === 'pending').length,
     feedbackPending: (db.feedback || []).filter((f) => f.status === 'pending').length,
     feedbackTotal: (db.feedback || []).length,
+    // 风控事件总数（用于「访问风控」导航红点）
+    securityEvents: (db.security?.events || []).length,
       visits: logs.length,
       visits24h: logs.filter((l) => now - l.ts < day).length,
       passRate: claims.length ? Math.round((approvedClaims.length / claims.length) * 100) : 0,

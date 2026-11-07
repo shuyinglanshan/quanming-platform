@@ -55,6 +55,7 @@ type Stats = {
     avatarsPending: number;
     feedbackPending: number;
     feedbackTotal: number;
+    securityEvents: number;
     visits: number;
     visits24h: number;
     passRate: number;
@@ -92,7 +93,7 @@ const NAV: NavItem[] = [
   { key: 'names', label: '圈名管理', icon: Sparkles, permission: 'names' },
   { key: 'notifications', label: '通知发布', icon: Megaphone, permission: 'notify' },
   { key: 'mail', label: '邮箱配置', icon: Mail, permission: 'settings' },
-  { key: 'security', label: '访问风控', icon: ShieldHalf, permission: 'settings' },
+  { key: 'security', label: '访问风控', icon: ShieldHalf, permission: 'settings', badge: (s) => s?.cards.securityEvents ?? 0 },
   { key: 'logs', label: '访问日志', icon: Activity, permission: 'logs' },
 ];
 
@@ -170,6 +171,14 @@ export default function AdminPage() {
               className="flex items-center gap-1.5 rounded-xl border border-rose-300/25 bg-rose-400/10 px-3 py-2 text-[12px] text-rose-200 transition hover:bg-rose-400/15"
             >
               <ImageIcon className="size-3.5" /> {avatarsPending} 个头像待审核
+            </button>
+          )}
+          {(stats?.cards.securityEvents ?? 0) > 0 && (
+            <button
+              onClick={() => setTab('security')}
+              className="flex items-center gap-1.5 rounded-xl border border-amber-300/25 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200 transition hover:bg-amber-400/15"
+            >
+              <ShieldHalf className="size-3.5" /> {stats.cards.securityEvents} 条风控事件
             </button>
           )}
           <Button variant="secondary" size="sm" className="h-9" onClick={() => load(true)} disabled={refreshing}>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Crown, Loader2, Save, Shield, ShieldCheck, User as UserIcon, UserCog } from 'lucide-react';
+import { Crown, Loader2, Save, Shield, ShieldAlert, ShieldCheck, User as UserIcon, UserCog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 
 type RoleDef = { key: string; label: string; desc: string };
 type Feature = { key: string; label: string; desc: string };
-type RolesData = { roles: RoleDef[]; features: Feature[]; grants: Record<string, string[]> };
+type RolesData = { roles: RoleDef[]; features: Feature[]; restricted?: Feature[]; grants: Record<string, string[]> };
 
 const ROLE_ICON: Record<string, any> = {
   admin: Crown,
@@ -57,21 +57,35 @@ export function RolesPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const toggle = (feature: string) => {
+/**
+ * 切换某功能开关
+ * 显式传入 role 而不是依赖闭包中的 active，
+ * 避免 setState 批处理时读到过期值导致写错角色的草稿。
+ */
+  const toggle = (feature: string, role: 'superadmin' | 'assessor') => {
     setDrafts((d) => {
-      const cur = new Set(d[active] || []);
+      const cur = new Set(d[role] || []);
       if (cur.has(feature)) cur.delete(feature);
       else cur.add(feature);
-      return { ...d, [active]: [...cur] };
+      return { ...d, [role]: [...cur] };
     });
   };
 
   const save = async () => {
-    setSaving(active);
+    const role = active;
+    const features = [...(drafts[role] || [])];
+    setSaving(role);
     try {
-      await api.put(`/admin/roles/${active}/features`, { features: drafts[active] || [] });
+      const res = await api.put<{ ok: boolean; features: string[] }>(`/admin/roles/${role}/features`, {
+        features,
+      });
+      // 用后端规范化后的结果回写该角色草稿，避免前后端不一致
+      const saved = Array.isArray(res?.features) ? res.features : features;
+      setDrafts((d) => ({ ...d, [role]: saved }));
+      setData((prev) =>
+        prev ? { ...prev, grants: { ...prev.grants, [role]: saved } } : prev,
+      );
       toast.success('功能权限已保存', { description: '该角色下次请求即刻生效' });
-      load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '保存失败');
     } finally {
@@ -160,11 +174,33 @@ export function RolesPanel() {
                   </div>
                   <p className="mt-0.5 text-[10.5px] leading-snug text-slate-500">{f.desc}</p>
                 </div>
-                <Switch checked={on} disabled={isBase} onCheckedChange={() => toggle(f.key)} />
+                <Switch checked={on} disabled={isBase} onCheckedChange={() => toggle(f.key, active)} />
               </div>
             );
           })}
         </div>
+
+        {/* 不可委派的高危功能，仅提示不提供开关，避免勾选后被拒绝造成困惑 */}
+        {data.restricted && data.restricted.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-400/[0.06] p-3">
+            <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-amber-200">
+              <ShieldAlert className="size-3.5" />
+              以下功能仅管理员可用，不可委派
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {data.restricted.map((r) => (
+                <div key={r.key} className="flex flex-wrap items-baseline gap-2 text-[11px]">
+                  <span className="text-slate-200">{r.label}</span>
+                  <span className="text-slate-500">{r.desc}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-[10.5px] leading-relaxed text-amber-200/70">
+              这些能力可接管账号、下架圈名或群发通知，开放给审核角色会形成「审核 → 提权 → 接管」的风险链条，
+              因此始终只保留给管理员。
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

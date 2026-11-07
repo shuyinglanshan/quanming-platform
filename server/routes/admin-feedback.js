@@ -1,5 +1,5 @@
 import express from 'express';
-import { db, save, findUserById } from '../lib/db.js';
+import { db, save, findUserById, DELEGATABLE_PERMISSIONS } from '../lib/db.js';
 import { requirePermission } from '../lib/auth.js';
 import { sanitizeText, paginate } from '../lib/util.js';
 import { eventLog } from '../lib/logger.js';
@@ -132,15 +132,21 @@ router.get('/roles', requirePermission('users'), (_req, res) => {
       { key: 'assessor', label: '审核员', desc: '负责审核圈名归属、申诉与头像' },
       { key: 'user', label: '普通用户', desc: '前台功能，无后台入口' },
     ],
+    // 仅返回「可委派」的功能，与 PUT 的白名单严格一致；
+    // users / names / notify 属于高危能力（可接管账号、下架圈名、群发通知），
+    // 只允许 admin 使用，不在此列出，避免用户勾选后被静默丢弃。
     features: [
       { key: 'review', label: '归属审核', desc: '审核圈名归属申请' },
       { key: 'appeal', label: '归属申诉', desc: '处理圈名归属申诉' },
       { key: 'avatars', label: '头像审核', desc: '审核用户头像修改申请' },
       { key: 'feedback', label: '反馈处理', desc: '查看并答复用户反馈与漏洞' },
       { key: 'logs', label: '访问日志', desc: '查看站点访问与操作日志' },
-      { key: 'users', label: '用户管理', desc: '管理用户、权限、头像与头衔' },
-      { key: 'names', label: '圈名管理', desc: '下架、转让、删除圈名' },
-      { key: 'notify', label: '通知发布', desc: '发布系统公告与定向通知' },
+    ].filter((f) => DELEGATABLE_PERMISSIONS.includes(f.key)),
+    // 供前端展示「不可委派」说明
+    restricted: [
+      { key: 'users', label: '用户管理', desc: '可重置密码、修改权限，属高危能力' },
+      { key: 'names', label: '圈名管理', desc: '可下架/转让圈名，属高危能力' },
+      { key: 'notify', label: '通知发布', desc: '可向全站群发通知，属高危能力' },
     ],
     grants: {
       superadmin: db.settings?.staffPermissions?.grants?.superadmin || [],
@@ -156,9 +162,17 @@ router.put('/roles/:role/features', requirePermission('users'), (req, res) => {
     return res.status(400).json({ error: '只能为超级管理员或审核员配置功能权限' });
   }
   const features = Array.isArray(req.body?.features) ? req.body.features : [];
-  // 与 db.js 的 DELEGATABLE_PERMISSIONS 保持一致：高危能力不可委派
-  const ALLOWED = ['review', 'appeal', 'avatars', 'feedback', 'logs'];
-  const clean = [...new Set(features.filter((f) => ALLOWED.includes(f)))];
+  // 与 GET 共用同一份白名单，避免「能勾选但保存不上」
+  const rejected = [...new Set(features.filter((f) => !DELEGATABLE_PERMISSIONS.includes(f)))];
+  if (rejected.length) {
+    return res.status(400).json({
+      error: `以下功能属于高危能力，仅管理员可用：${rejected.join('、')}`,
+      code: 'PERMISSION_NOT_DELEGATABLE',
+      rejected,
+      allowed: DELEGATABLE_PERMISSIONS,
+    });
+  }
+  const clean = [...new Set(features)];
 
   db.settings.staffPermissions = db.settings.staffPermissions || { grants: {} };
   db.settings.staffPermissions.grants = db.settings.staffPermissions.grants || {};
