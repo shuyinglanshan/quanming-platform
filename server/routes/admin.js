@@ -19,6 +19,9 @@ router.use(requireStaff);
 router.get('/stats', (req, res) => {
   const now = Date.now();
   const day = 86400000;
+  // 统计一律直读数据库，避免内存缓存上限导致数字失真
+  const conn = getDb();
+
   const users = db.users.filter((u) => !u.deleted);
   const claims = db.claims;
   const appeals = db.appeals;
@@ -31,7 +34,6 @@ router.get('/stats', (req, res) => {
    * 导致「访问量」等数字比实际偏小、与真实数据不符。
    * 改为直接对 access_logs 表做 SQL 聚合，保证统计口径与数据库一致。
    */
-  const conn = getDb();
   const startDay = new Date(now - 13 * day);
   const startKey = timeBucket(startDay.getTime());
 
@@ -115,8 +117,16 @@ router.get('/stats', (req, res) => {
     feedbackTotal: (db.feedback || []).length,
     // 风控事件总数（用于「访问风控」导航红点）
     securityEvents: (db.security?.events || []).length,
-      visits: logs.length,
-      visits24h: logs.filter((l) => now - l.ts < day).length,
+      // 访问量直读数据库，避免内存日志被 MAX_LOGS 裁剪导致数字偏小
+      visits: Number(conn.prepare('SELECT COUNT(*) c FROM access_logs').get().c) || 0,
+      visits24h:
+        Number(
+          conn
+            .prepare(
+              `SELECT COUNT(*) c FROM access_logs WHERE date(ts/1000,'unixepoch','localtime') = ?`,
+            )
+            .get(timeBucket(now)).c,
+        ) || 0,
       passRate: claims.length ? Math.round((approvedClaims.length / claims.length) * 100) : 0,
       avgReviewHours: avgReview,
       searches: db.searches.length,
