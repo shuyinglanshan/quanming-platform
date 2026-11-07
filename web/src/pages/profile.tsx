@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   BadgeCheck,
@@ -14,6 +14,7 @@ import {
   Pencil,
   Plus,
   ShieldCheck,
+  Scale,
   Sparkles,
   Flag,
   Gavel,
@@ -77,11 +78,16 @@ const STATUS_ICON = {
 
 export default function ProfilePage() {
   const { user, setUser } = useAuth();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const rawTab = params.get('tab') || 'names';
   const tab = rawTab === 'claim' ? 'claims' : rawTab;
   const [data, setData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
+  // 小法庭发起弹窗
+  const [courtDialog, setCourtDialog] = useState<{ open: boolean; appeal?: any }>({ open: false });
+  const [courtHours, setCourtHours] = useState(48);
+  const [courtLoading, setCourtLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [detail, setDetail] = useState<Claim | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -547,6 +553,15 @@ export default function ProfilePage() {
                         <Trash2 className="size-3.5" /> 撤回
                       </Button>
                     )}
+                    {a.status === 'pending' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => { setCourtDialog({ open: true, appeal: a }); setCourtHours(48); }}
+                      >
+                        <Scale className="size-3.5" /> 申请小法庭
+                      </Button>
+                    )}
                     <Button variant="ghost" size="sm" asChild>
                       <Link to={`/names/${a.nameId}`}>查看圈名</Link>
                     </Button>
@@ -893,6 +908,75 @@ export default function ProfilePage() {
       </Dialog>
 
       {/* 绑定账号 */}
+      {/* 申请小法庭 */}
+      <Dialog open={courtDialog.open} onOpenChange={(o) => setCourtDialog((c) => ({ ...c, open: o }))}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Scale className="size-4 text-violet-300" /> 申请小法庭介入
+            </DialogTitle>
+            <DialogDescription>
+              争议将由全体注册用户投票裁决。双方需轮番提交材料，投票结束后票数高者获得圈名归属。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3 text-[12px] leading-relaxed text-slate-400">
+              <div className="mb-1 font-medium text-white">{courtDialog.appeal?.name}</div>
+              发起后对方会收到通知，双方各提交一次材料后即可开启投票。
+            </div>
+            <div className="space-y-2">
+              <Label>投票时长</Label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[24, 48, 72, 168].map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => setCourtHours(h)}
+                    className={cn(
+                      'rounded-lg border px-2 py-1.5 text-[11.5px] transition',
+                      courtHours === h
+                        ? 'border-violet-300/45 bg-violet-400/12 text-white'
+                        : 'border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20',
+                    )}
+                  >
+                    {h === 168 ? '7 天' : h + ' 小时'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              小法庭一旦开启投票，结果由社区投票决定；如认为存在误判，可在判决后联系管理员复核。
+            </p>
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button variant="secondary" onClick={() => setCourtDialog({ open: false })}>取消</Button>
+            <Button
+              disabled={courtLoading}
+              onClick={async () => {
+                if (!courtDialog.appeal) return;
+                setCourtLoading(true);
+                try {
+                  const res = await api.post<{ court: any }>('/court', {
+                    appealId: courtDialog.appeal.id,
+                    durationHours: courtHours,
+                  });
+                  toast.success('小法庭已创建', { description: '请先提交你的材料，等待对方回应' });
+                  setCourtDialog({ open: false });
+                  navigate('/court/' + res.court.id);
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '发起失败');
+                } finally {
+                  setCourtLoading(false);
+                }
+              }}
+            >
+              {courtLoading ? <Loader2 className="size-4 animate-spin" /> : <Scale className="size-4" />}
+              确认发起
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!bindTarget} onOpenChange={(o) => !o && setBindTarget(null)}>
         <DialogContent className="max-w-md">
           {bindTarget && (
