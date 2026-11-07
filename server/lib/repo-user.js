@@ -111,10 +111,15 @@ export function consumeBindQuota(userId, options = {}) {
 /** 统计（与内存数据保持一致） */
 export function userStats(userId) {
   const claims = db.claims.filter((c) => c.userId === userId);
+  const appeals = db.appeals.filter((a) => a.userId === userId);
   return {
     claims: claims.length,
+    // 审核中：待审核的归属申请（个人中心统计卡片依赖）
+    pending: claims.filter((c) => c.status === 'pending').length,
     approved: claims.filter((c) => c.status === 'approved').length,
     rejected: claims.filter((c) => c.status === 'rejected').length,
+    // 申诉中：待处理的申诉
+    appealsPending: appeals.filter((a) => a.status === 'pending').length,
     names: db.names.filter((n) => n.ownerId === userId && n.status === 'active').length,
     appeals: db.appeals.filter((a) => a.userId === userId).length,
   };

@@ -110,13 +110,13 @@ export function LogsPanel() {
                   setPage(1);
                 }}
                 className={cn(
-                  'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] transition',
+                  'flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] whitespace-nowrap transition',
                   tab === t.key ? 'bg-white/12 text-white' : 'text-slate-400 hover:text-slate-200',
                 )}
               >
-                {t.label}
+                <span className="whitespace-nowrap">{t.label}</span>
                 {data?.counts && (
-                  <span className={cn('rounded px-1 text-[10px]', tab === t.key ? 'bg-white/15 text-slate-100' : 'bg-white/5 text-slate-500')}>
+                  <span className={cn('shrink-0 rounded px-1 text-[10px] tabular-nums', tab === t.key ? 'bg-white/15 text-slate-100' : 'bg-white/5 text-slate-500')}>
                     {data.counts[t.key] ?? 0}
                   </span>
                 )}

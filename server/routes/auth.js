@@ -131,7 +131,8 @@ router.get('/availability', (req, res) => {
 
 /* ---------------- 发送邮箱验证码 ---------------- */
 router.post('/send-code', async (req, res) => {
-  const { email, purpose = 'register' } = req.body || {};
+  // email 需要被规范化为「QQ号@qq.com」，因此用 let 而非 const
+  let { email, purpose = 'register' } = req.body || {};
   if (!['register', 'login'].includes(purpose)) return res.status(400).json({ error: '验证码用途不合法' });
 
   const parsed = parseQQNumberEmail(email);
@@ -189,8 +190,41 @@ router.post('/send-code', async (req, res) => {
     // 发送失败则作废本次验证码，避免占用发送次数
     db.codes = db.codes.filter((c) => c.id !== record.id);
     save('codes');
-    if (err.code === 'MAIL_NOT_CONFIGURED') return res.status(503).json({ error: err.message });
-    res.status(502).json({ error: '验证码邮件发送失败，请稍后重试或联系管理员' });
+
+    if (err.code === 'MAIL_NOT_CONFIGURED') {
+      return res.status(503).json({ error: err.message, code: 'MAIL_NOT_CONFIGURED' });
+    }
+
+    // 根据 SMTP 返回码给出可操作的提示，便于管理员自助排查
+    const raw = String(err.message || '');
+    const detail = { smtpCode: err.responseCode || null, raw: raw.slice(0, 300) };
+
+    if (/535|Invalid login|authentication/i.test(raw)) {
+      return res.status(502).json({
+        error: '邮箱授权码校验失败：请到 QQ 邮箱「设置 → 账户 → POP3/SMTP 服务」重新生成授权码后填写（注意不是登录密码）',
+        code: 'SMTP_AUTH_FAILED',
+        ...detail,
+      });
+    }
+    if (/ETIMEDOUT|ETIMEDOUT|timeout|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(raw)) {
+      return res.status(502).json({
+        error: '无法连接 QQ 邮箱服务器：请检查服务器是否放行 465/587 端口出站访问',
+        code: 'SMTP_NETWORK',
+        ...detail,
+      });
+    }
+    if (/550|553|spam|rejected/i.test(raw)) {
+      return res.status(502).json({
+        error: '邮件被 QQ 邮箱拒收：可能是内容触发风控，或收件地址不存在',
+        code: 'SMTP_REJECTED',
+        ...detail,
+      });
+    }
+    return res.status(502).json({
+      error: '验证码邮件发送失败，请稍后重试或联系管理员',
+      code: 'SMTP_FAILED',
+      ...detail,
+    });
   }
 });
 
@@ -277,7 +311,8 @@ function afterRegisterFailure(req, detail) {
 
 /* ---------------- 注册（QQ 邮箱 / 手机号） ---------------- */
 router.post('/register', async (req, res) => {
-  const { method = 'email', email, phone, username, code, password, nickname } = req.body || {};
+  // email 会被规范化为「QQ号@qq.com」，用 let
+  let { method = 'email', email, phone, username, code, password, nickname } = req.body || {};
 
   // 1) 限流 + 滑块预检（不消费，允许修正表单后重试）
   const guard = precheckRegister(req);
