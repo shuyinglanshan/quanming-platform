@@ -549,3 +549,30 @@
 .geetest_box_wrap {
   z-index: 2147483001 !important;
 }
+
+/* ============================================================
+ * 关键修复：滑块无法拖动
+ *
+ * 问题：极验的 .geetest_popup_ghost 是一层覆盖在整个弹层上的
+ *      「幽灵遮罩」（z-index: 2147483646），它拦截了鼠标事件，
+ *      导致 elementFromPoint 命中的是 ghost 而不是滑块按钮，
+ *      用户按下鼠标拖不动。
+ *
+ * 修复：让 ghost 层不接收指针事件，事件穿透到下层滑块。
+ *      同时确保滑块本身可接收事件。
+ * ============================================================ */
+.geetest_popup_ghost {
+  pointer-events: none !important;
+}
+
+.geetest_slider,
+.geetest_slider .geetest_btn,
+.geetest_track {
+  pointer-events: auto !important;
+}
+
+/* 滑块按钮确保可拖动 */
+.geetest_btn {
+  cursor: pointer !important;
+  touch-action: none !important;
+}
