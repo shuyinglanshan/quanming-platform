@@ -411,3 +411,6 @@ CREATE TABLE IF NOT EXISTS name_bans (
 );
 CREATE INDEX IF NOT EXISTS idx_name_bans_user ON name_bans(user_id);
 CREATE INDEX IF NOT EXISTS idx_name_bans_name ON name_bans(name_id);
+
+-- 图片审核扩展：支持圈名图片（target_type: user=用户头像, name=圈名图片）
+-- 旧库通过 sqlite.js 迁移补齐

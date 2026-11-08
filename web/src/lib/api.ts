@@ -24,6 +24,9 @@ export type User = {
 
 export type NameItem = {
   evidence?: { url: string; name: string; size: number; mime: string }[];
+  /** 圈名自定义图片（经审核通过） */
+  imageUrl?: string;
+  imageSha256?: string;
   id: string;
   name: string;
   description: string;
@@ -74,6 +77,11 @@ export type AvatarRequest = {
   imageSha256: string;
   imageMime: string;
   imageSize: number;
+  /** 审核目标：user=用户头像，name=圈名图片 */
+  targetType?: 'user' | 'name';
+  targetId?: string | null;
+  /** 圈名图片时附带圈名名称 */
+  targetName?: string;
   status: 'pending' | 'approved' | 'rejected';
   rejectReason: string;
   reviewedAt: string | null;

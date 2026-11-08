@@ -70,7 +70,7 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
     setActing(true);
     try {
       await api.post(`/admin/avatars/${item.id}/approve`);
-      toast.success(`已通过「${item.user?.nickname}」的头像申请`, { description: '用户头像已更新，并已通知对方' });
+      toast.success(item.targetType === 'name' ? `已通过圈名「${item.targetName || ''}」的图片` : `已通过「${item.user?.nickname}」的头像申请`, { description: item.targetType === 'name' ? '圈名图片已更新，并已通知对方' : '用户头像已更新，并已通知对方' });
       setPreview(null);
       load();
       onChanged?.();
@@ -87,7 +87,7 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
     setActing(true);
     try {
       await api.post(`/admin/avatars/${rejectTarget.id}/reject`, { reason: reason.trim() });
-      toast.success('已驳回该头像申请', { description: '用户头像保持不变，并会收到驳回理由' });
+      toast.success(rejectTarget.targetType === 'name' ? '已驳回该圈名图片' : '已驳回该头像申请', { description: '原图保持不变，并会收到驳回理由' });
       setRejectTarget(null);
       setPreview(null);
       setReason('');
@@ -157,7 +157,7 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
             <ImageOff className="size-6 text-slate-500" />
           </div>
           <p className="text-[13px] text-slate-400">
-            {status === 'pending' ? '暂无待审核的头像申请' : '没有符合条件的记录'}
+            {status === 'pending' ? '暂无待审核的图片' : '没有符合条件的记录'}
           </p>
         </div>
       ) : (
@@ -169,14 +169,23 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
               className="glass group relative flex gap-3 overflow-hidden rounded-2xl p-3 text-left transition hover:border-white/20"
             >
               <div className="relative size-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/30">
-                <img src={item.imageUrl} alt="待审头像" className="size-full object-cover" />
+                <img src={item.imageUrl} alt="待审图片" className="size-full object-cover" />
                 <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[9px] text-slate-300">
                   申请图片
                 </span>
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[13px] font-medium text-white">{item.user?.nickname || '未知'}</span>
+                  {/* 类型徽标：区分用户头像与圈名图片 */}
+                  <Badge
+                    variant={item.targetType === 'name' ? 'cyan' : 'secondary'}
+                    className="shrink-0 px-1.5 py-0 text-[9.5px]"
+                  >
+                    {item.targetType === 'name' ? '圈名图片' : '用户头像'}
+                  </Badge>
+                  <span className="truncate text-[13px] font-medium text-white">
+                    {item.targetType === 'name' ? item.targetName || '—' : item.user?.nickname || '未知'}
+                  </span>
                   <Badge
                     variant={item.status === 'pending' ? 'warning' : item.status === 'approved' ? 'success' : 'danger'}
                     className="shrink-0 px-1.5 py-0 text-[9.5px]"
@@ -184,7 +193,9 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
                     {item.status === 'pending' ? '待审核' : item.status === 'approved' ? '已通过' : '已驳回'}
                   </Badge>
                 </div>
-                <div className="mt-0.5 truncate text-[11px] text-slate-500">@{item.user?.username}</div>
+                <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                  {item.targetType === 'name' ? `归属者 @${item.user?.username || '—'}` : `@${item.user?.username || '—'}`}
+                </div>
                 <div className="mt-1.5 flex items-center gap-2 text-[10.5px] text-slate-500">
                   <span className="truncate font-mono">{item.imageSha256.slice(0, 10)}…</span>
                   <span className="shrink-0">{formatBytes(item.imageSize)}</span>
@@ -209,9 +220,9 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <ShieldCheck className="size-4 text-violet-300" /> 头像审核
+                  <ShieldCheck className="size-4 text-violet-300" /> 图片审核
                 </DialogTitle>
-                <DialogDescription>审核通过后用户头像才会生效；驳回时用户头像保持不变。</DialogDescription>
+                <DialogDescription>支持审核「用户头像」与「圈名图片」。通过后才会生效，驳回时保持原图不变。</DialogDescription>
               </DialogHeader>
 
               <div className="grid gap-3 sm:grid-cols-2">

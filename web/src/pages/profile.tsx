@@ -96,6 +96,9 @@ export default function ProfilePage() {
   const [nameEvidence, setNameEvidence] = useState<any[]>([]);
   const [nameSaving, setNameSaving] = useState(false);
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  // 圈名自定义图片
+  const [nameImagePreview, setNameImagePreview] = useState('');
+  const [nameImageBusy, setNameImageBusy] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [detail, setDetail] = useState<Claim | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -1008,6 +1011,55 @@ export default function ProfilePage() {
                 className="min-h-24"
               />
               <div className="text-right text-[10.5px] text-slate-500">{nameDesc.length}/300</div>
+            </div>
+
+            {/* 圈名自定义图片（需审核） */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>圈名图片</Label>
+                <span className="text-[10.5px] text-slate-500">需管理员审核</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/12 bg-white/[0.04]">
+                  {nameImagePreview ? (
+                    <img src={nameImagePreview} alt="圈名图片" className="size-full object-cover" />
+                  ) : (
+                    <ImagePlus className="size-5 text-slate-500" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <label className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.03] px-2.5 py-1.5 text-[11.5px] text-slate-400 transition hover:border-violet-300/40 hover:text-violet-200">
+                    <ImagePlus className="size-3.5" />
+                    {nameImageBusy ? '上传中…' : '选择图片'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={nameImageBusy}
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setNameImageBusy(true);
+                        try {
+                          const form = new FormData();
+                          form.append('image', f);
+                          await api.post(`/me/names/${nameEdit.item.id}/image`, form);
+                          toast.success('图片已提交审核', { description: '管理员通过后才会显示在详情页' });
+                          // 审核期间展示本地预览，避免误以为上传失败
+                          setNameImagePreview(URL.createObjectURL(f));
+                        } catch (err) {
+                          toast.error(err instanceof ApiError ? err.message : '上传失败');
+                        } finally {
+                          setNameImageBusy(false);
+                        }
+                      }}
+                    />
+                  </label>
+                  <p className="text-[10px] leading-snug text-slate-500">
+                    JPG / PNG / WEBP，2MB 以内，建议正方形
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-2">

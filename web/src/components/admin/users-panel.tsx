@@ -283,7 +283,7 @@ export function UsersPanel({ onChanged, currentUserId }: { onChanged?: () => voi
               <div className="flex items-center gap-1.5">
                 <span className={cn('rounded-full border px-1.5 py-0 text-[10px]', ROLE_META[r].tone)}>{ROLE_META[r].label}</span>
                 <span className="ml-auto text-[10.5px] text-slate-500">
-                  {data?.counts?.[r === 'user' ? 'user' : r] ?? 0} 人
+                  {data?.counts?.[r] ?? 0} 人
                 </span>
               </div>
               <p className="mt-1 text-[10.5px] leading-relaxed text-slate-500">{ROLE_META[r].desc}</p>

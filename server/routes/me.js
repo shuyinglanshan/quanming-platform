@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import express from 'express';
 import { get, all } from '../lib/db-sqlite.js';
 import { db, save } from '../lib/db.js';
@@ -303,6 +304,80 @@ router.delete('/names/:id/evidence', requireAuth, (req, res) => {
   save('claims');
   eventLog(req, '删除圈名材料', `${name.name}`);
   res.json({ ok: true, evidence: claim.images });
+});
+
+/**
+ * 圈名自定义图片：提交审核（不直接生效）
+ *
+ * 安全措施与用户头像一致：
+ * - 复用 storeAvatar 做魔数校验（禁 SVG）、尺寸与体积限制、SHA-256 计算
+ * - 服务端重命名落盘，文件名仅十六进制
+ * - 需管理员在「图片审核」中通过后才生效
+ */
+router.post('/names/:id/image', requireAuth, upload.array('image', 1), (req, res) => {
+  const name = db.names.find((n) => n.id === req.params.id);
+  if (!name) {
+    if (file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
+    return res.status(404).json({ error: '圈名不存在' });
+  }
+  if (name.ownerId !== req.user.id) {
+    if (file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
+    return res.status(403).json({ error: '只有圈名归属者可以上传图片' });
+  }
+  const file = req.files?.[0];
+  if (!file) return res.status(400).json({ error: '请选择要上传的图片' });
+
+  // 已有待审的圈名图片则拒绝，避免重复提交
+  const pending = db.avatarRequests.find(
+    (r) => r.targetType === 'name' && r.targetId === name.id && r.status === 'pending',
+  );
+  if (pending) {
+    if (file?.path) fs.existsSync(req.file.path) && fs.unlinkSync(req.file.path);
+    return res.status(409).json({ error: '该圈名已有图片正在审核中，请耐心等待' });
+  }
+
+  const stored = storeAvatar(file);
+  if (!stored.ok) return res.status(400).json({ error: stored.error });
+
+  const record = {
+    id: uid('img_'),
+    userId: req.user.id,
+    imageUrl: stored.url,
+    imageSha256: stored.sha256,
+    imageMime: stored.mime,
+    imageSize: stored.size,
+    targetType: 'name',
+    targetId: name.id,
+    status: 'pending',
+    rejectReason: '',
+    reviewedBy: null,
+    reviewedAt: null,
+    createdAt: new Date().toISOString(),
+  };
+  db.avatarRequests.unshift(record);
+  save('avatar_requests');
+
+  eventLog(req, '提交圈名图片', name.name);
+  res.status(201).json({ ok: true, request: shapeAvatarRequest(record) });
+});
+
+/**
+ * 圈名图片状态：当前图片 + 待审记录
+ */
+router.get('/names/:id/image', requireAuth, (req, res) => {
+  const name = db.names.find((n) => n.id === req.params.id);
+  if (!name) return res.status(404).json({ error: '圈名不存在' });
+
+  const mine = db.avatarRequests
+    .filter((r) => r.targetType === 'name' && r.targetId === name.id)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  res.json({
+    imageUrl: name.imageUrl || '',
+    imageSha256: name.imageSha256 || '',
+    pending: mine.filter((r) => r.status === 'pending').length,
+    requests: mine.slice(0, 10).map((r) => shapeAvatarRequest(r)),
+  });
 });
 
 export default router;

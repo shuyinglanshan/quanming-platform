@@ -62,6 +62,24 @@ export function getDb() {
     db.exec('ALTER TABLE users ADD COLUMN court_permission INTEGER DEFAULT 1');
   }
 
+  // 图片审核：扩展字段（支持圈名图片，与用户头像共用同一审核表）
+  const arCols = db.prepare('PRAGMA table_info(avatar_requests)').all().map((c) => c.name);
+  if (arCols.length && !arCols.includes('target_type')) {
+    db.exec("ALTER TABLE avatar_requests ADD COLUMN target_type TEXT DEFAULT 'user'");
+  }
+  if (arCols.length && !arCols.includes('target_id')) {
+    db.exec('ALTER TABLE avatar_requests ADD COLUMN target_id TEXT');
+  }
+
+  // 圈名：自定义图片
+  const nameCols2 = db.prepare('PRAGMA table_info(names)').all().map((c) => c.name);
+  if (nameCols2.length && !nameCols2.includes('image_url')) {
+    db.exec('ALTER TABLE names ADD COLUMN image_url TEXT');
+  }
+  if (nameCols2.length && !nameCols2.includes('image_sha256')) {
+    db.exec('ALTER TABLE names ADD COLUMN image_sha256 TEXT');
+  }
+
   // 会话：最后活跃时间（用于闲置自动踢出）
   const sessCols = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
   if (sessCols.length && !sessCols.includes('last_active_at')) {

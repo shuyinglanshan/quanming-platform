@@ -115,6 +115,8 @@ router.get('/users', requirePermission('users'), (req, res) => {
       active: db.users.filter((u) => u.status === 'active' && !u.deleted).length,
       banned: db.users.filter((u) => u.status === 'banned' && !u.deleted).length,
       admin: db.users.filter((u) => u.role === 'admin' && !u.deleted).length,
+      // 超级管理员数量：此前遗漏该字段，导致前端「超级管理员」始终显示 0
+      superadmin: db.users.filter((u) => u.role === 'superadmin' && !u.deleted).length,
       assessor: db.users.filter((u) => u.role === 'assessor' && !u.deleted).length,
       user: db.users.filter((u) => u.role === 'user' && !u.deleted).length,
     },
@@ -345,7 +347,15 @@ router.get('/avatars', requirePermission('users'), (req, res) => {
   const result = paginate(list, page, pageSize);
   res.json({
     ...result,
-    items: result.items.map((a) => shapeAvatarRequest(a, findUserById(a.userId))),
+    items: result.items.map((a) => {
+      const item = shapeAvatarRequest(a, findUserById(a.userId));
+      // 圈名图片：附带圈名名称，便于审核时识别审核对象
+      if (item.targetType === 'name' && item.targetId) {
+        const n = db.names.find((x) => x.id === item.targetId);
+        item.targetName = n?.name || '';
+      }
+      return item;
+    }),
     counts: {
       all: db.avatarRequests.length,
       pending: db.avatarRequests.filter((a) => a.status === 'pending').length,
@@ -363,8 +373,20 @@ router.post('/avatars/:id/approve', requirePermission('users'), (req, res) => {
   const u = findUserById(record.userId);
   if (!u) return res.status(404).json({ error: '申请用户不存在' });
 
-  const oldUrl = u.avatarUrl;
-  updateUser(u.id, { avatarUrl: record.imageUrl, avatarSha256: record.imageSha256 });
+  // 根据目标类型决定写回用户头像还是圈名图片
+  const isNameImage = record.targetType === 'name' && record.targetId;
+  let oldUrl = '';
+  if (isNameImage) {
+    const target = db.names.find((n) => n.id === record.targetId);
+    if (!target) return res.status(404).json({ error: '目标圈名不存在' });
+    oldUrl = target.imageUrl || '';
+    target.imageUrl = record.imageUrl;
+    target.imageSha256 = record.imageSha256;
+    save('names');
+  } else {
+    oldUrl = u.avatarUrl;
+    updateUser(u.id, { avatarUrl: record.imageUrl, avatarSha256: record.imageSha256 });
+  }
 
   record.status = 'approved';
   record.reviewedBy = req.user.id;
@@ -374,14 +396,17 @@ router.post('/avatars/:id/approve', requirePermission('users'), (req, res) => {
   // 旧头像不在被任何申请引用时删除，避免磁盘堆积
   if (oldUrl && !db.avatarRequests.some((a) => a.imageUrl === oldUrl)) removeAvatarFile(oldUrl);
 
+  const targetName = isNameImage ? db.names.find((n) => n.id === record.targetId) : null;
   notifyUser(u.id, {
     category: 'system',
     level: 'success',
-    title: '头像修改申请已通过',
-    content: '你提交的头像已通过审核并生效，可在个人中心查看。',
-    link: '/me',
+    title: isNameImage ? `圈名「${targetName?.name || ''}」图片已通过审核` : '头像修改申请已通过',
+    content: isNameImage
+      ? '你提交的圈名图片已通过审核并生效，可在圈名详情页查看。'
+      : '你提交的头像已通过审核并生效，可在个人中心查看。',
+    link: isNameImage ? `/names/${record.targetId}` : '/me',
   });
-  eventLog(req, '通过头像申请', `${u.username}`);
+  eventLog(req, isNameImage ? '通过圈名图片' : '通过头像申请', isNameImage ? targetName?.name || '' : `${u.username}`);
   res.json({ ok: true, avatarUrl: record.imageUrl });
 });
 
@@ -401,12 +426,14 @@ router.post('/avatars/:id/reject', requirePermission('users'), (req, res) => {
 
   const u = findUserById(record.userId);
   if (u) {
+    const isNameImg = record.targetType === 'name' && record.targetId;
+    const tName = isNameImg ? db.names.find((n) => n.id === record.targetId) : null;
     notifyUser(u.id, {
       category: 'system',
       level: 'warning',
-      title: '头像修改申请被驳回',
+      title: isNameImg ? `圈名「${tName?.name || ''}」图片被驳回` : '头像修改申请被驳回',
       content: `驳回理由：${reason}`,
-      link: '/me',
+      link: isNameImg ? `/names/${record.targetId}` : '/me',
     });
     eventLog(req, '驳回头像申请', `${u.username} · ${reason.slice(0, 30)}`);
   }

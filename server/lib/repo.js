@@ -171,6 +171,8 @@ export function mapName(row) {
     approvedAt: row.approved_at || row.created_at,
     claimId: row.claim_id,
     reviewerId: row.reviewer_id,
+    imageUrl: row.image_url || '',
+    imageSha256: row.image_sha256 || '',
   };
 }
 
@@ -186,6 +188,8 @@ export function toNameRow(n) {
     created_at: n.createdAt,
     approved_at: n.approvedAt || n.createdAt,
     claim_id: n.claimId || null,
+    image_url: n.imageUrl || null,
+    image_sha256: n.imageSha256 || null,
     reviewer_id: n.reviewerId || null,
   };
 }
@@ -706,6 +710,8 @@ export function mapAvatarRequest(row) {
     imageSha256: row.image_sha256,
     imageMime: row.image_mime || '',
     imageSize: int(row.image_size),
+    targetType: row.target_type || 'user',
+    targetId: row.target_id || null,
     status: row.status,
     rejectReason: row.reject_reason || '',
     reviewedBy: row.reviewed_by || null,
@@ -717,8 +723,8 @@ export function mapAvatarRequest(row) {
 export function saveAvatarRequest(r) {
   getDb()
     .prepare(
-      `INSERT INTO avatar_requests (id,user_id,image_url,image_sha256,image_mime,image_size,status,reject_reason,reviewed_by,reviewed_at,created_at)
-       VALUES (@id,@user_id,@image_url,@image_sha256,@image_mime,@image_size,@status,@reject_reason,@reviewed_by,@reviewed_at,@created_at)
+      `INSERT INTO avatar_requests (id,user_id,image_url,image_sha256,image_mime,image_size,target_type,target_id,status,reject_reason,reviewed_by,reviewed_at,created_at)
+       VALUES (@id,@user_id,@image_url,@image_sha256,@image_mime,@image_size,@target_type,@target_id,@status,@reject_reason,@reviewed_by,@reviewed_at,@created_at)
        ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, reject_reason=excluded.reject_reason,
         reviewed_by=excluded.reviewed_by, reviewed_at=excluded.reviewed_at`,
@@ -730,6 +736,8 @@ export function saveAvatarRequest(r) {
       image_sha256: r.imageSha256,
       image_mime: r.imageMime || '',
       image_size: int(r.imageSize),
+      target_type: r.targetType || 'user',
+      target_id: r.targetId || null,
       status: r.status,
       reject_reason: r.rejectReason || null,
       reviewed_by: r.reviewedBy || null,

@@ -148,6 +148,9 @@ export function shapeAvatarRequest(r, user) {
     imageSha256: r.imageSha256,
     imageMime: r.imageMime,
     imageSize: r.imageSize,
+    // 审核目标：user=用户头像，name=圈名图片
+    targetType: r.targetType || 'user',
+    targetId: r.targetId || null,
     status: r.status,
     rejectReason: r.rejectReason || '',
     reviewedAt: r.reviewedAt || null,

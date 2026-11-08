@@ -45,6 +45,9 @@ export function shapeName(n, { withEvidence = false } = {}) {
         }
       : null,
     openAppeals: db.appeals.filter((a) => a.nameId === n.id && a.status === 'pending').length,
+    // 圈名自定义图片（审核通过后生效）
+    imageUrl: n.imageUrl || '',
+    imageSha256: n.imageSha256 || '',
     // 仅详情页返回材料图片，列表接口不返回以免体积过大
     ...(withEvidence ? { evidence } : {}),
   };

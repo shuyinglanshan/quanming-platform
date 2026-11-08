@@ -106,12 +106,21 @@ export default function NameDetailPage() {
           }}
         />
         <div className="relative flex flex-col gap-5 sm:flex-row sm:items-start">
-          <div
-            className="grid size-16 shrink-0 place-items-center rounded-2xl border border-white/15 text-2xl font-semibold text-white shadow-lg"
-            style={{ background: `linear-gradient(135deg, hsl(${hue} 72% 52%), hsl(${(hue + 55) % 360} 76% 42%))` }}
-          >
-            {data.name.slice(0, 1)}
-          </div>
+          {/* 圈名图片：审核通过后展示自定义图片，否则回退首字色块 */}
+          {data.imageUrl ? (
+            <img
+              src={data.imageUrl}
+              alt={data.name}
+              className="size-16 shrink-0 rounded-2xl border border-white/15 object-cover shadow-lg"
+            />
+          ) : (
+            <div
+              className="grid size-16 shrink-0 place-items-center rounded-2xl border border-white/15 text-2xl font-semibold text-white shadow-lg"
+              style={{ background: `linear-gradient(135deg, hsl(${hue} 72% 52%), hsl(${(hue + 55) % 360} 76% 42%))` }}
+            >
+              {data.name.slice(0, 1)}
+            </div>
+          )}
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">

@@ -88,7 +88,7 @@ const NAV: NavItem[] = [
   { key: 'overview', label: '数据概览', icon: LayoutDashboard, permission: 'dashboard' },
   { key: 'claims', label: '归属审核', icon: ShieldCheck, permission: 'review', badge: (s) => s?.cards.pending ?? 0 },
   { key: 'appeals', label: '归属申诉', icon: Gavel, permission: 'appeal', badge: (s) => s?.cards.appealsPending ?? 0 },
-  { key: 'avatars', label: '头像审核', icon: ImageIcon, permission: 'users', badge: (s) => s?.cards.avatarsPending ?? 0 },
+  { key: 'avatars', label: '图片审核', icon: ImageIcon, permission: 'users', badge: (s) => s?.cards.avatarsPending ?? 0 },
   { key: 'courts', label: '小法庭', icon: Scale, permission: 'appeal' },
   { key: 'feedback', label: '反馈处理', icon: MessageSquare, permission: 'feedback', badge: (s) => s?.cards.feedbackPending ?? 0 },
   { key: 'users', label: '用户与权限', icon: Users, permission: 'users' },
@@ -187,7 +187,7 @@ export default function AdminPage() {
               onClick={() => setTab('avatars')}
               className="flex items-center gap-1.5 rounded-xl border border-rose-300/25 bg-rose-400/10 px-3 py-2 text-[12px] text-rose-200 transition hover:bg-rose-400/15"
             >
-              <ImageIcon className="size-3.5" /> {avatarsPending} 个头像待审核
+              <ImageIcon className="size-3.5" /> {avatarsPending} 张图片待审核
             </button>
           )}
           {(stats?.cards.securityEvents ?? 0) > 0 && (
