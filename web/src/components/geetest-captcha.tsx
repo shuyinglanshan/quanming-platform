@@ -119,8 +119,11 @@ export const GeetestCaptcha = forwardRef<
           {
             captchaId: cfg.captchaId,
             // 官方可选值：float（浮动）/ popup（弹出）/ bind（隐藏按钮）
-            // 用 popup：点击我们自己的按钮后弹出验证层，交互最清晰
-            product: 'popup',
+            //
+            // 选 bind：由我们自己的按钮触发 showCaptcha()，
+            // 这样弹层的显示时机完全可控，且实测在 popup 模式下
+            // 某些情况下弹层不显示（box_wrap 保持 display:none）。
+            product: 'bind',
             language: 'zho',
             // 用户完成验证后自动关闭弹层
             hideBar: ['close'],
@@ -192,15 +195,28 @@ export const GeetestCaptcha = forwardRef<
         window.clearInterval(timer);
         return;
       }
-      if (Date.now() - startedAt > 6000) {
+      if (Date.now() - startedAt > 8000) {
         window.clearInterval(timer);
         console.warn('[geetest] 验证超时未响应，切换为点击验证');
         setStatus('fallback');
       }
     }, 1000);
 
+    // 正确做法：直接调用实例的 showCaptcha() 弹出验证层
+    // （product=popup 同样支持；之前误判为只有 bind 可用，
+    //   改成 destroy+重建反而导致弹层不显示）
+    const inst = captchaRef.current;
+    if (inst?.showCaptcha) {
+      try {
+        inst.showCaptcha();
+        return;
+      } catch (err) {
+        console.warn('[geetest] showCaptcha 失败，尝试重建实例', err);
+      }
+    }
+    // 兜底：实例不可用时重建
     try {
-      captchaRef.current?.destroy?.();
+      inst?.destroy?.();
     } catch {
       /* 忽略 */
     }

@@ -519,3 +519,33 @@
     animation: focusRingIn var(--dur-fast) var(--ease-out-expo) forwards;
   }
 }
+
+/* ============================================================
+ * 极验 GT4 弹层修复
+ *
+ * 问题：极验 SDK 生成的 .geetest_box_wrap 使用 position:fixed
+ *      但 height 被算成 0px（maxHeight 却是 386px），
+ *      导致内部已渲染的验证界面（滑块拼图）完全不可见。
+ *
+ * 修复：强制外层容器高度自适应内容，并保证足够层级。
+ * 该样式只影响极验生成的元素，不会污染站点其他部分。
+ * ============================================================ */
+.geetest_box_wrap {
+  height: auto !important;
+  min-height: 300px !important;
+}
+
+.geetest_box_wrap .geetest_box,
+.geetest_box_wrap .geetest_box_layer {
+  height: auto !important;
+  min-height: 300px !important;
+}
+
+/* 保证弹层在最上层，不被页面元素遮挡 */
+.geetest_popup_wrap {
+  z-index: 2147483000 !important;
+}
+
+.geetest_box_wrap {
+  z-index: 2147483001 !important;
+}

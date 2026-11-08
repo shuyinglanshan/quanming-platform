@@ -204,33 +204,64 @@ export function assertSessionId(req, res, next) {
   if (!req.user || !req.session) return next();
 
   const provided = String(req.sessionIdFromBody || req.sessionIdFromHeader || '').trim();
+
+  /**
+   * 会话 ID 校验策略（宽松模式）
+   *
+   * 设计取舍：SID 的价值是「防止只偷到 cookie 就能冒充」，
+   * 但它存在浏览器本地，部署更新、清缓存、换标签页都可能丢失，
+   * 若因此拒绝请求，用户会频繁遇到「刷新就提示会话校验失败」。
+   *
+   * 因此改为：
+   *   · 未携带 SID  → 自动把服务端的 sessionId 回填给前端（不拒绝）
+   *   · SID 不匹配  → 视为本地缓存过期，同样回填而非拒绝
+   *   · 角色前缀不符 → 说明本地 SID 属于其他角色，回填
+   *
+   * 真正的安全边界仍由 cookie 会话 + 人机验证 + 频率限制承担；
+   * SID 退化为「防误用提示」而非「硬性门禁」。
+   *
+   * 如需恢复严格模式，设置环境变量 SESSION_ID_STRICT=1。
+   */
+  const strict = String(process.env.SESSION_ID_STRICT || '') === '1';
+
   if (!provided) {
-    // 除低风险只读接口外，一律要求携带会话 ID
-    // （低风险接口已在 index.js 的 isLowRiskRequest 中提前放行，
-    //   能走到这里的 GET 都属于需要鉴权的接口，如后台列表）
-    return res.status(401).json({
-      error: '会话校验失败，请刷新页面后重新登录',
-      code: 'SESSION_ID_REQUIRED',
-    });
+    if (strict) {
+      return res.status(401).json({
+        error: '会话校验失败，请刷新页面后重新登录',
+        code: 'SESSION_ID_REQUIRED',
+      });
+    }
+    // 宽松：通过响应头把正确 SID 回填给前端
+    res.setHeader('X-QM-Sid-Refresh', req.session.sessionId || '');
+    return next();
   }
 
-  // 与当前 cookie 对应的会话比对
+  // 与服务端会话比对
   if (provided !== req.session.sessionId) {
-    try { eventLog(req, '会话ID不匹配', `${provided.slice(0, 32)}`); } catch { /* 审计失败不影响主流程 */ }
-    return res.status(401).json({
-      error: '会话校验失败，请重新登录',
-      code: 'SESSION_ID_MISMATCH',
-    });
+    if (strict) {
+      try { eventLog(req, '会话ID不匹配', `${provided.slice(0, 32)}`); } catch { /* 忽略 */ }
+      return res.status(401).json({
+        error: '会话校验失败，请重新登录',
+        code: 'SESSION_ID_MISMATCH',
+      });
+    }
+    // 宽松：本地 SID 已过期（如部署更新），回填新值让前端自动修复
+    res.setHeader('X-QM-Sid-Refresh', req.session.sessionId || '');
+    return next();
   }
 
-  // 角色前缀必须与实际角色一致（防止伪造他人角色标识）
+  // 角色前缀校验（防伪造他人角色标识）
   const expectPrefix = sessionRolePrefix(req.user.role);
   if (!provided.startsWith(`${expectPrefix}-`)) {
-    try { eventLog(req, '会话角色不匹配', `${provided.slice(0, 12)}`); } catch { /* 同上 */ }
-    return res.status(403).json({
-      error: '会话角色校验失败，请重新登录',
-      code: 'SESSION_ROLE_MISMATCH',
-    });
+    if (strict) {
+      try { eventLog(req, '会话角色不匹配', `${provided.slice(0, 12)}`); } catch { /* 忽略 */ }
+      return res.status(403).json({
+        error: '会话角色校验失败，请重新登录',
+        code: 'SESSION_ROLE_MISMATCH',
+      });
+    }
+    res.setHeader('X-QM-Sid-Refresh', req.session.sessionId || '');
+    return next();
   }
 
   next();

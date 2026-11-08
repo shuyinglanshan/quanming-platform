@@ -234,7 +234,8 @@ export async function secureFetch(
     'X-QM-Key': header,
     ...(init.headers || {}),
   };
-  // GET 无请求体，会话 ID 走头部
+  // 刷新后 SID 可能尚未恢复，先等一小会儿（避免误报过期）
+  await waitSidReady();
   const sid = getSessionId();
   if (sid) headers['X-QM-Sid'] = sid;
 
@@ -257,6 +258,13 @@ export async function secureFetch(
     credentials: 'include',
     cache: 'no-store',
   });
+
+  // 服务端在 SID 缺失/过期时会通过响应头回填正确值，
+  // 前端自动同步，避免下次请求继续用旧 SID 而被拒
+  const sidRefresh = res.headers.get('x-qm-sid-refresh');
+  if (sidRefresh) {
+    setSessionId(sidRefresh);
+  }
 
   const text = await res.text();
   let data: any = null;
@@ -295,19 +303,66 @@ function currentKid(): string {
  * 存 sessionStorage 而非 localStorage：关闭标签页即失效，更安全。
  * ============================================================ */
 const SID_KEY = 'qm_sid';
+/**
+ * SID 持久副本
+ *
+ * sessionStorage 在刷新时会被保留（同一标签页），
+ * 但如果首个请求早于 React 挂载完成，仍可能读不到。
+ * 这里再加一份 localStorage 副本作为兜底：
+ *   · 读取优先 sessionStorage → localStorage
+ *   · 写入时两边同步
+ *   · 登出时两边清除
+ *
+ * 安全性：SID 本身不是凭证（cookie 才是），
+ * 它只是「本次会话的标识」，即使泄露也无法单独冒充登录。
+ */
+const SID_PERSIST_KEY = 'qm_sid_p';
+
+/**
+ * SID 就绪闸门
+ *
+ * 页面刷新后，sessionStorage 中的 SID 可能尚未被 AuthProvider 写入，
+ * 此时并发的业务请求会因缺少 SID 被服务端拒绝。
+ *
+ * 这里用一个轻量闸门：AuthProvider 恢复会话后调用 markSidReady()，
+ * 期间发出的请求最多等待 1.5 秒，避免刷新瞬间的误报。
+ */
+let sidReady = false;
+let sidReadyResolve: (() => void) | null = null;
+const sidReadyPromise = new Promise<void>((resolve) => {
+  sidReadyResolve = resolve;
+});
+
+export function markSidReady() {
+  if (sidReady) return;
+  sidReady = true;
+  sidReadyResolve?.();
+}
+
+/** 等待 SID 就绪（最多 timeout 毫秒，避免永久阻塞） */
+export async function waitSidReady(timeout = 1500): Promise<void> {
+  if (sidReady || getSessionId()) return;
+  await Promise.race([sidReadyPromise, new Promise((r) => setTimeout(r, timeout))]);
+}
 
 export function setSessionId(sid: string | null) {
   try {
-    if (sid) sessionStorage.setItem(SID_KEY, sid);
-    else sessionStorage.removeItem(SID_KEY);
+    if (sid) {
+      sessionStorage.setItem(SID_KEY, sid);
+      localStorage.setItem(SID_PERSIST_KEY, sid);
+    } else {
+      sessionStorage.removeItem(SID_KEY);
+      localStorage.removeItem(SID_PERSIST_KEY);
+    }
   } catch {
-    /* 隐私模式下 sessionStorage 可能不可用，忽略 */
+    /* 隐私模式下存储可能不可用，忽略 */
   }
 }
 
 export function getSessionId(): string {
   try {
-    return sessionStorage.getItem(SID_KEY) || '';
+    // 优先 sessionStorage（当前标签页），回退 localStorage（刷新后兜底）
+    return sessionStorage.getItem(SID_KEY) || localStorage.getItem(SID_PERSIST_KEY) || '';
   } catch {
     return '';
   }
