@@ -256,25 +256,40 @@ function expireSession(session, reason, req = null) {
 }
 
 export function requireAuth(req, res, next) {
-  if (!req.user) {
-    // 区分「从未登录」与「会话过期」：后者需要前端弹「登录过期」提示
-    const reason = req.sessionExpiredReason;
-    if (reason) {
-      return res.status(401).json({
-        error: '登录过期，请重新登录',
-        code: 'SESSION_EXPIRED',
-        reason,
-      });
-    }
-    return res.status(401).json({ error: '请先登录后再继续操作', code: 'NOT_AUTHENTICATED' });
-  }
+  if (!req.user) return unauthorized(req, res);
   next();
+}
+
+/**
+ * 统一的「未登录/会话失效」响应
+ *
+ * 关键：必须带 code 字段，否则前端无法识别为会话问题，
+ * 只会当成普通错误弹个提示，页面继续显示旧的登录态
+ * —— 这正是「伪登录态」的根源。
+ *
+ * 区分两种情况：
+ *   · 有过会话但失效（有 sessionExpiredReason）→ SESSION_EXPIRED
+ *   · 从未登录（没有 cookie）→ NOT_AUTHENTICATED
+ */
+function unauthorized(req, res) {
+  const reason = req.sessionExpiredReason;
+  if (reason) {
+    return res.status(401).json({
+      error: '登录过期，请重新登录',
+      code: 'SESSION_EXPIRED',
+      reason,
+    });
+  }
+  return res.status(401).json({
+    error: '请先登录后再继续操作',
+    code: 'NOT_AUTHENTICATED',
+  });
 }
 
 /** 需要指定权限点（admin 拥有全部权限） */
 export function requirePermission(permission) {
   return (req, res, next) => {
-    if (!req.user) return res.status(401).json({ error: '请先登录后再继续操作' });
+    if (!req.user) return unauthorized(req, res);
     if (!hasPermission(req.user, permission)) {
       return res.status(403).json({ error: '当前账号没有该操作权限，请联系管理员开通' });
     }
@@ -284,14 +299,14 @@ export function requirePermission(permission) {
 
 /** 仅管理员 */
 export function requireAdmin(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: '请先登录后再继续操作' });
+  if (!req.user) return unauthorized(req, res);
   if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可以执行该操作' });
   next();
 }
 
 /** 管理员或审核员 */
 export function requireStaff(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: '请先登录后再继续操作' });
+  if (!req.user) return unauthorized(req, res);
   if (!['admin', 'superadmin', 'assessor'].includes(req.user.role)) {
     return res.status(403).json({ error: '仅管理员、超级管理员与审核员可以访问该资源' });
   }

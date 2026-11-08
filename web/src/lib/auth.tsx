@@ -36,27 +36,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [mailConfigured, setMailConfigured] = useState<boolean | null>(null);
 
+  /**
+   * 恢复登录态
+   *
+   * 关键改动：加入超时兜底
+   *   旧实现如果 /auth/me 因网络/服务问题一直挂起，
+   *   loading 永远是 true，页面会卡在「正在验证登录状态…」。
+   *   现在无论成功失败，最多 8 秒内必定结束 loading。
+   */
   const refresh = useCallback(async () => {
-    try {
-      const data = await api.get<{ user: User | null; mailConfigured: boolean; sessionId?: string | null }>('/auth/me');
-      setUser(data.user);
-      setMailConfigured(data.mailConfigured);
-      // 会话恢复完成，放行后续请求（避免刷新瞬间误报「会话校验失败」）
-      const { markSidReady } = await import('./crypto');
-      markSidReady();
-      // 已登录则启动心跳（页面可见且有操作时定时上报）
-      if (data.user) {
-        const { startHeartbeat } = await import('./heartbeat');
-        startHeartbeat();
+    let settled = false;
+    const finish = (u: User | null) => {
+      if (settled) return;
+      settled = true;
+      setUser(u);
+      setLoading(false);
+      // 放行后续请求，避免刷新瞬间误报「会话校验失败」
+      import('./crypto').then((m) => m.markSidReady());
+    };
+
+    // 超时保护：8 秒未返回则视为未登录
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        console.warn('[auth] 恢复登录态超时，按未登录处理');
+        finish(null);
       }
+    }, 8000);
+
+    try {
+      const data = await api.get<{
+        user: User | null;
+        mailConfigured: boolean;
+        sessionId?: string | null;
+      }>('/auth/me');
+      window.clearTimeout(timer);
+      setMailConfigured(data.mailConfigured);
+      // 已登录则启动心跳
+      if (data.user) {
+        import('./heartbeat').then((m) => m.startHeartbeat());
+      }
+      finish(data.user);
       return data.user;
     } catch {
-      setUser(null);
-      const { markSidReady } = await import('./crypto');
-      markSidReady();
+      window.clearTimeout(timer);
+      finish(null);
       return null;
-    } finally {
-      setLoading(false);
     }
   }, []);
 

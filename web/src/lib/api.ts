@@ -245,12 +245,47 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     resetKeyCache();
   }
 
-  // 会话过期：触发全局提示（不抛异常，由调用方按 status 处理）
-  if (status === 401 && ['SESSION_EXPIRED', 'SESSION_ID_REQUIRED', 'SESSION_ID_MISMATCH'].includes(data?.code || '')) {
-    const { setSessionId } = await import('./crypto');
-    setSessionId(null);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('qm:session-expired', { detail: data }));
+  /**
+   * 会话状态处理
+   *
+   * 关键区分：
+   *   SESSION_EXPIRED      会话真的过期（闲置/被踢/角色变更）→ 弹「登录过期」
+   *   SESSION_ID_MISMATCH  SID 与服务端记录不符 → 视为过期
+   *   SESSION_ID_REQUIRED  仅表示「本次请求没带 SID」
+   *
+   * SESSION_ID_REQUIRED 不能直接当成过期：
+   *   页面刷新后，AuthProvider 会先请求 /auth/me 重建 SID，
+   *   而通知未读数等并发请求可能在此**之前**发出，此时 SID 尚未写入，
+   *   若直接弹「登录过期」会造成「一刷新就报过期」的误报。
+   *   正确做法：仅清除本地 SID 并静默失败，等 /auth/me 完成后重试。
+   */
+  if (status === 401) {
+    const code = data?.code || '';
+    const { setSessionId, getSessionId } = await import('./crypto');
+
+    // 会话已失效 / 从未登录：都要清空前端登录态
+    if (code === 'SESSION_EXPIRED' || code === 'SESSION_ID_MISMATCH' || code === 'NOT_AUTHENTICATED') {
+      setSessionId(null);
+      if (typeof window !== 'undefined') {
+        // NOT_AUTHENTICATED 说明 cookie 也没了，属于「会话已结束」
+        window.dispatchEvent(
+          new CustomEvent('qm:session-expired', {
+            detail: { ...data, reason: data?.reason || (code === 'NOT_AUTHENTICATED' ? 'invalid' : undefined) },
+          }),
+        );
+      }
+    } else if (code === 'SESSION_ID_REQUIRED') {
+      // 区分两种情况：
+      //   a) 本地本来就没有 SID（刷新后尚未恢复）→ 静默，等 /auth/me
+      //   b) 本地有 SID 但服务端说「需要 SID」→ 说明会话已失效，必须登出
+      //      （否则会出现「提示过期但界面仍是登录态」的伪登录态）
+      const hadSid = Boolean(getSessionId());
+      setSessionId(null);
+      if (hadSid && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('qm:session-expired', { detail: { ...data, reason: 'invalid' } }),
+        );
+      }
     }
   }
 
