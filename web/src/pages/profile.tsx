@@ -49,6 +49,9 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ClaimForm } from '@/components/claim-form';
+import { EmailField } from '@/components/email-field';
+import { GeetestCaptcha, type AnyCaptchaPayload } from '@/components/geetest-captcha';
+import { sha256Hex } from '@/lib/password';
 import { JoinGroupButton } from '@/components/join-group-button';
 import { useAuth } from '@/lib/auth';
 import { api, ApiError, type Appeal, type Claim, type NameItem, type User } from '@/lib/api';
@@ -109,6 +112,16 @@ export default function ProfilePage() {
   const [handle, setHandle] = useState('');
   const [binding, setBinding] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
+  // 更换邮箱
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailNew, setEmailNew] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [emailPassword, setEmailPassword] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailCountdown, setEmailCountdown] = useState(0);
+  const [emailGt, setEmailGt] = useState<AnyCaptchaPayload | null>(null);
+  const [emailGtConfigured, setEmailGtConfigured] = useState(false);
   const [phoneValue, setPhoneValue] = useState('');
   const [phonePassword, setPhonePassword] = useState('');
   const [pwdOpen, setPwdOpen] = useState(false);
@@ -685,9 +698,22 @@ export default function ProfilePage() {
               ) : (
                 <Badge variant="secondary">未绑定</Badge>
               )}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setEmailNew('');
+                  setEmailCode('');
+                  setEmailPassword('');
+                  setEmailGt(null);
+                  setEmailOpen(true);
+                }}
+              >
+                <Pencil className="size-3.5" /> 更换
+              </Button>
             </div>
             <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-[11.5px] text-slate-400">
-              邮箱用于接收验证码与账号找回通知，如需更换请联系管理员。
+              邮箱用于接收验证码与账号找回通知。更换需验证新邮箱归属，并会下线其他设备的登录状态。
             </div>
           </Card>
 
@@ -1374,6 +1400,148 @@ export default function ProfilePage() {
               }}
             >
               {avatarBusy ? <Loader2 className="size-4 animate-spin" /> : <ImageUp className="size-4" />} 提交审核
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 更换绑定邮箱 */}
+      <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>更换绑定邮箱</DialogTitle>
+            <DialogDescription>
+              更换后该邮箱将用于登录与接收通知，其他设备的登录状态会被下线。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="new-email">新邮箱</Label>
+              <EmailField
+                id="new-email"
+                value={emailNew}
+                onChange={setEmailNew}
+                onValidChange={() => {}}
+                statusMode="register"
+                placeholder="请输入新邮箱地址"
+              />
+            </div>
+
+            {/* 人机验证：必须先通过才能发送验证码 */}
+            <div className="space-y-2">
+              <Label>人机验证</Label>
+              <GeetestCaptcha
+                scene="email"
+                onPayload={setEmailGt}
+                onConfiguredChange={setEmailGtConfigured}
+              />
+              {emailGtConfigured && !emailGt && (
+                <p className="text-[11px] text-slate-500">完成验证后才能发送验证码</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="email-code">邮箱验证码</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="email-code"
+                  value={emailCode}
+                  onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="6 位数字"
+                  inputMode="numeric"
+                  className="tracking-[0.3em]"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="h-11 w-[6.6rem] shrink-0 px-2 text-[12px]"
+                  disabled={emailSending || emailCountdown > 0 || !emailNew.trim() || (emailGtConfigured && !emailGt)}
+                  onClick={async () => {
+                    if (emailGtConfigured && !emailGt) return toast.error('请先完成人机验证');
+                    setEmailSending(true);
+                    try {
+                      await api.post('/auth/send-code', {
+                        email: emailNew.trim(),
+                        purpose: 'email',
+                        ...(emailGt || {}),
+                      });
+                      toast.success('验证码已发送至新邮箱', {
+                        description: '10 分钟内有效，请注意查收（含垃圾箱）',
+                      });
+                      setEmailCountdown(60);
+                      const timer = setInterval(() => {
+                        setEmailCountdown((c) => {
+                          if (c <= 1) {
+                            clearInterval(timer);
+                            return 0;
+                          }
+                          return c - 1;
+                        });
+                      }, 1000);
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '发送失败');
+                    } finally {
+                      setEmailSending(false);
+                    }
+                  }}
+                >
+                  {emailSending ? <Loader2 className="size-3.5 animate-spin" /> : <Mail className="size-3.5" />}
+                  {emailCountdown > 0 ? `${emailCountdown}s` : '发送'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="email-pwd">当前密码</Label>
+              <Input
+                id="email-pwd"
+                type="password"
+                value={emailPassword}
+                onChange={(e) => setEmailPassword(e.target.value)}
+                placeholder="输入当前登录密码以确认身份"
+                autoComplete="current-password"
+              />
+            </div>
+
+            <div className="rounded-xl border border-amber-300/20 bg-amber-400/[0.07] px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
+              更换后其他设备的登录状态会被强制下线，你需要在新设备上重新登录。
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setEmailOpen(false)}>取消</Button>
+            <Button
+              disabled={emailBusy || !emailNew.trim() || !emailCode || !emailPassword}
+              onClick={async () => {
+                if (!emailNew.trim()) return toast.error('请输入新邮箱');
+                if (!/^\d{6}$/.test(emailCode)) return toast.error('请输入 6 位验证码');
+                if (!emailPassword) return toast.error('请输入当前密码');
+                setEmailBusy(true);
+                try {
+                  const res = await api.post<{ email: string; sessionsRevoked: number }>('/me/email', {
+                    email: emailNew.trim(),
+                    code: emailCode,
+                    password: await sha256Hex(emailPassword),
+                    pwdAlg: 'sha256',
+                    ...(emailGt || {}),
+                  });
+                  toast.success('绑定邮箱已更换', {
+                    description: `新邮箱：${res.email}${res.sessionsRevoked ? `，已下线 ${res.sessionsRevoked} 个其他会话` : ''}`,
+                  });
+                  setEmailOpen(false);
+                  // 刷新用户信息
+                  const fresh = await api.get<{ user: User }>('/auth/me');
+                  if (fresh.user) setUser(fresh.user);
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '更换失败');
+                } finally {
+                  setEmailBusy(false);
+                }
+              }}
+            >
+              {emailBusy ? <Loader2 className="size-4 animate-spin" /> : <Mail className="size-4" />}
+              确认更换
             </Button>
           </DialogFooter>
         </DialogContent>

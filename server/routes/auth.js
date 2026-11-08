@@ -41,7 +41,7 @@ import { sendCodeMail, isMailConfigured } from '../lib/mailer.js';
 import { eventLog } from '../lib/logger.js';
 import { trustedClientIp } from '../lib/ip.js';
 import { checkLock, recordFailure, recordSuccess } from '../lib/login-guard.js';
-import { createChallenge, verifyChallenge, consumeChallenge, peekChallenge } from '../lib/captcha.js';
+import { geetestConfigured, publicGeetestConfig, verifyGeetest, verifyAnyCaptcha, issueClickChallenge } from '../lib/geetest.js';
 import {
   checkRegisterAllowed,
   recordRegisterAttempt,
@@ -85,22 +85,23 @@ function touchLogin(user, req) {
   save();
 }
 
-/* ---------------- 滑块验证 ---------------- */
-router.get('/captcha', (req, res) => {
-  const challenge = createChallenge(clientIp(req));
-  if (challenge.error) {
-    return res.status(429).json({ error: challenge.error, retryAfter: challenge.retryAfter });
-  }
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  res.json(challenge);
+/* ---------------- 人机验证配置（极验 GT4）---------------- */
+router.get('/geetest/config', (req, res) => {
+  // scene=register|login，默认 register 保持兼容
+  const scene = String(req.query.scene || 'register');
+  res.json(publicGeetestConfig(scene));
 });
 
-router.post('/captcha/verify', (req, res) => {
-  const { id } = req.body || {};
-  if (!id) return res.status(400).json({ error: '验证参数缺失' });
-  const result = verifyChallenge(id);
-  if (!result.ok) return res.status(400).json({ error: result.error });
-  res.json({ ok: true });
+/* ---------------- 兜底点击验证：签发挑战 ---------------- */
+/**
+ * 签发一次性点击挑战
+ *
+ * 挑战由服务端生成并保存，前端只拿到 ID 与目标点，
+ * 提交时必须带上服务端下发的签名，无法凭空伪造通过凭据。
+ */
+router.get('/click-challenge', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(issueClickChallenge());
 });
 
 /* ---------------- 邮箱后缀识别 ---------------- */
@@ -114,29 +115,50 @@ router.get('/email-check', (req, res) => {
 });
 
 /* ---------------- 可用性检查（手机号 / 用户名） ---------------- */
+/**
+ * 账号可用性检查
+ *
+ * 安全修正（防批量枚举）：
+ *   旧实现直接返回 taken: true/false，任何人都能拿字典批量探测
+ *   哪些用户名/邮箱已注册，属于典型的用户枚举漏洞。
+ *
+ *   现在：
+ *     · 每 IP 每分钟限 20 次
+ *     · 只返回格式是否合法，**不返回是否已被占用**
+ *       （占用情况统一在注册/登录时提示，且带人机验证）
+ *     · 前端因此无法用来批量探测
+ */
+const availHits = new Map();
+const AVAIL_WINDOW = 60_000;
+const AVAIL_MAX = 20;
+
 router.get('/availability', (req, res) => {
+  const ip = trustedClientIp(req) || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  const rec = availHits.get(ip);
+  if (!rec || now - rec.start > AVAIL_WINDOW) {
+    availHits.set(ip, { start: now, count: 1 });
+  } else {
+    rec.count += 1;
+    if (rec.count > AVAIL_MAX) {
+      return res.status(429).json({ error: '查询过于频繁，请稍后再试', code: 'AVAILABILITY_RATE_LIMITED' });
+    }
+  }
+
   const phone = normalizePhone(req.query.phone);
   const username = String(req.query.username || '').trim();
   const result = { phone: null, username: null };
 
   if (phone) {
     const err = validatePhone(phone);
-    result.phone = {
-      value: phone,
-      valid: !err,
-      error: err || '',
-      taken: !err ? Boolean(findUserByPhone(phone)) : false,
-    };
+    result.phone = { valid: !err, error: err || '' };
   }
   if (username) {
     const err = validateUsername(username);
-    result.username = {
-      value: username,
-      valid: !err,
-      error: err || '',
-      taken: !err ? Boolean(findUserByUsername(username)) : false,
-    };
+    // 只返回格式校验结果，不暴露 taken
+    result.username = { valid: !err, error: err || '' };
   }
+  res.setHeader('Cache-Control', 'no-store');
   res.json(result);
 });
 
@@ -144,7 +166,7 @@ router.get('/availability', (req, res) => {
 router.post('/send-code', async (req, res) => {
   // 任意合法邮箱均可注册/登录
   let { email, purpose = 'register' } = req.body || {};
-  if (!['register', 'login'].includes(purpose)) return res.status(400).json({ error: '验证码用途不合法' });
+  if (!['register', 'login', 'email'].includes(purpose)) return res.status(400).json({ error: '验证码用途不合法' });
 
   const parsed = parseEmail(email);
   if (!parsed.valid) {
@@ -156,6 +178,29 @@ router.post('/send-code', async (req, res) => {
   const existing = findUserByEmail(email);
   if (purpose === 'register' && existing) return res.status(409).json({ error: '该邮箱已注册，请直接登录' });
   if (purpose === 'login' && !existing) return res.status(404).json({ error: '该邮箱尚未注册，请先注册账号' });
+  if (purpose === 'email') {
+    // 更换绑定邮箱：必须已登录，且新邮箱不能被他人占用
+    if (!req.user) return res.status(401).json({ error: '请先登录', code: 'NOT_AUTHENTICATED' });
+    if (existing && existing.id !== req.user.id) {
+      return res.status(409).json({ error: '该邮箱已被其他账号使用' });
+    }
+    if (existing && existing.id === req.user.id) {
+      return res.status(400).json({ error: '新邮箱与当前绑定邮箱相同' });
+    }
+  }
+
+  // 发送验证码前必须通过人机验证（防刷邮箱 / 短信轰炸）
+  // 场景映射：更换邮箱使用独立的 email 场景凭据
+  const scene = purpose === 'email' ? 'email' : purpose === 'register' ? 'register' : 'login';
+  const captcha = await verifyAnyCaptcha(scene, req.body, { ip: clientIp(req) });
+  if (!captcha.ok) {
+    eventLog(req, '发码人机验证失败', `${email} · ${captcha.reason || ''}`.slice(0, 80), 'error');
+    return res.status(400).json({
+      error: '请先完成人机验证',
+      code: 'CAPTCHA_REQUIRED',
+      reason: captcha.reason,
+    });
+  }
 
   cleanupCodes();
   const now = Date.now();
@@ -239,7 +284,7 @@ router.post('/send-code', async (req, res) => {
   }
 });
 
-function consumeCode(email, code, purpose) {
+export function consumeCode(email, code, purpose) {
   const now = Date.now();
   const target = String(email || '').toLowerCase();
   const list = db.codes
@@ -269,29 +314,27 @@ function consumeCode(email, code, purpose) {
  * 这样用户填错用户名/手机号等表单错误时，不需要重新拖动滑块，体验更好；
  * 同时因为最终提交时仍会消费，安全性与「一次性验证」保持一致。
  */
-function precheckRegister(req) {
-  const { captchaId } = req.body || {};
-  if (!captchaId) {
-    return { ok: false, status: 400, body: { error: '请先完成滑块验证', code: 'CAPTCHA_REQUIRED' } };
-  }
-
-  // 先判断限流，避免被限流的用户白白消耗滑块
+/**
+ * 注册前置校验：极验人机验证 + IP 频率限制
+ *
+ * 与旧滑块的区别：极验的一次性由服务端 lot_number 去重保证，
+ * 因此不再需要「预检/消费」两段式 —— 校验通过即可创建账号。
+ */
+async function precheckRegister(req) {
+  // 先判断限流，避免被限流的用户白白消耗一次验证
   const limited = checkRegisterAllowed(req);
   if (limited) return { ok: false, status: limited.status, body: limited.body };
 
-  // 校验滑块「已完成」但不消费
-  const peek = peekChallenge(captchaId);
-  if (!peek.ok) return { ok: false, status: 400, body: { error: peek.error, code: 'CAPTCHA_INVALID' } };
-
-  return { ok: true };
-}
-
-/** 真正的提交时刻：一次性消费滑块 */
-function commitCaptcha(req) {
-  const { captchaId } = req.body || {};
-  const consumed = consumeChallenge(captchaId);
-  if (!consumed.ok) {
-    return { ok: false, status: 400, body: { error: consumed.error, code: 'CAPTCHA_INVALID' } };
+  if (geetestConfigured('register')) {
+    const gt = await verifyAnyCaptcha('register', req.body, { ip: clientIp(req) });
+    if (!gt.ok) {
+      eventLog(req, '注册人机验证失败', String(gt.reason || '').slice(0, 60), 'error');
+      return {
+        ok: false,
+        status: 400,
+        body: { error: '人机验证未通过，请重新完成验证', code: 'GEETEST_FAILED', reason: gt.reason },
+      };
+    }
   }
   return { ok: true };
 }
@@ -323,10 +366,10 @@ function afterRegisterFailure(req, detail) {
 /* ---------------- 注册（QQ 邮箱 / 手机号） ---------------- */
 router.post('/register', async (req, res) => {
   // email 会被规范化为「QQ号@qq.com」，用 let
-  let { method = 'email', email, phone, username, code, password, nickname } = req.body || {};
+  let { email, username, code, password, nickname } = req.body || {};
 
   // 1) 限流 + 滑块预检（不消费，允许修正表单后重试）
-  const guard = precheckRegister(req);
+  const guard = await precheckRegister(req);
   if (!guard.ok) return res.status(guard.status).json(guard.body);
 
   // 客户端可能传来 SHA-256 摘要（64 位 hex），此时强度由前端保证，服务端只做格式校验
@@ -355,22 +398,10 @@ router.post('/register', async (req, res) => {
     return res.status(blocked?.status || 400).json(blocked?.body || { error: nickError });
   }
 
-  // 2) 账号标识校验
+  // 2) 账号标识校验：仅支持邮箱注册（已移除手机号）
   let emailInfo = null;
-  let normalizedPhone = '';
-  if (method === 'phone') {
-    const phoneError = validatePhone(phone);
-    if (phoneError) {
-      const blocked = afterRegisterFailure(req, '手机号不合法');
-      return res.status(blocked?.status || 400).json(blocked?.body || { error: phoneError });
-    }
-    normalizedPhone = normalizePhone(phone);
-    if (findUserByPhone(normalizedPhone)) {
-      const blocked = afterRegisterFailure(req, '手机号已注册');
-      return res.status(blocked?.status || 409).json(blocked?.body || { error: '该手机号已注册，请直接登录' });
-    }
-  } else {
-    // 支持任意合法邮箱后缀
+  const normalizedPhone = '';
+  {
     const parsed = parseEmail(email);
     if (!parsed.valid) {
       const blocked = afterRegisterFailure(req, '邮箱格式不正确');
@@ -394,10 +425,6 @@ router.post('/register', async (req, res) => {
       return res.status(blocked?.status || 400).json(blocked?.body || { error: checked.error });
     }
   }
-
-  // 3) 所有校验通过，正式消费滑块（一次性）
-  const commit = commitCaptcha(req);
-  if (!commit.ok) return res.status(commit.status).json(commit.body);
 
   // 4) 创建账号
   const now = new Date().toISOString();
@@ -430,15 +457,15 @@ router.post('/register', async (req, res) => {
 
   const { token, sessionId } = createSession(user.id, sessionMeta(req, user));
   setSessionCookie(res, token);
-  eventLog(req, '注册账号', method === 'phone' ? `${user.username} · ${user.phone}` : `${user.username} · ${user.email}`);
+  eventLog(req, '注册账号', `${user.username} · ${user.email}`);
   res.status(201).json({ user: publicUser(user), sessionId });
 });
 
 /* ---------------- 密码登录（邮箱 / 手机号 / 用户名） ---------------- */
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { identifier, password } = req.body || {};
   const raw = String(identifier || '').trim();
-  if (!raw) return res.status(400).json({ error: '请输入邮箱、手机号或用户名' });
+  if (!raw) return res.status(400).json({ error: '请输入邮箱或用户名' });
 
   // 暴力破解防护：锁定期间直接拒绝，即使密码正确
   const lock = checkLock(raw, clientIp(req));
@@ -493,6 +520,20 @@ router.post('/login', (req, res) => {
     user.passwordHash = hashPassword(password);
     save();
   }
+  // 密码正确后再做人机验证：
+  // 这样密码错误时不必消耗验证次数，也避免验证结果被用于账号枚举
+  if (geetestConfigured('login')) {
+    const gt = await verifyAnyCaptcha('login', req.body, { ip: clientIp(req) });
+    if (!gt.ok) {
+      eventLog(req, '登录人机验证失败', String(gt.reason || '').slice(0, 60), 'error');
+      return res.status(400).json({
+        error: '人机验证未通过，请重新完成验证',
+        code: 'GEETEST_FAILED',
+        reason: gt.reason,
+      });
+    }
+  }
+
   touchLogin(user, req);
   const { token, sessionId } = createSession(user.id, sessionMeta(req, user));
   setSessionCookie(res, token);

@@ -1,17 +1,18 @@
 import fs from 'node:fs';
 import express from 'express';
 import { get, all } from '../lib/db-sqlite.js';
-import { db, save } from '../lib/db.js';
-import { requireAuth, touchHeartbeat, heartbeatInterval, sessionIdleTimeout } from '../lib/auth.js';
-import { validatePassword, sanitizeText, normalizePhone } from '../lib/util.js';
+import { db, save, findUserById, findUserByEmail } from '../lib/db.js';
+import { requireAuth, touchHeartbeat, heartbeatInterval, sessionIdleTimeout, sessionToken } from '../lib/auth.js';
+import { geetestConfigured, verifyAnyCaptcha } from '../lib/geetest.js';
+import { validatePassword, sanitizeText, normalizePhone, parseEmail } from '../lib/util.js';
 import { hashPassword, verifyPassword, isSha256Hex } from '../lib/password.js';
 import { eventLog } from '../lib/logger.js';
-import { unreadCount } from '../lib/notify.js';
+import { unreadCount, notifyUser } from '../lib/notify.js';
+import { consumeCode } from './auth.js';
 import { uid } from '../lib/db.js';
 import { upload, chargeUploadQuota } from '../lib/upload.js';
 import { storeAvatar, shapeAvatarRequest, removeAvatarFile } from '../lib/avatar.js';
 import {
-  findUserById,
   shapeUser,
   updateUser,
   consumeBindQuota,
@@ -407,6 +408,100 @@ router.post('/heartbeat', requireAuth, (req, res) => {
     idleTimeout: sessionIdleTimeout(),
     // 会话剩余绝对有效期
     expiresIn: Math.max(0, (req.session?.expiresAt || 0) - Date.now()),
+  });
+});
+
+
+/* ================= 更换绑定邮箱 ================= */
+
+/**
+ * 更换绑定邮箱
+ *
+ * 安全措施：
+ *   1. 必须已登录
+ *   2. 必须通过人机验证（email 场景，凭据在后台配置）
+ *   3. 必须验证新邮箱收到的验证码（证明邮箱归属）
+ *   4. 新邮箱不能已被其他账号占用
+ *   5. 需输入当前密码确认身份
+ *   6. 更换后使该账号的其他会话失效（防账号劫持后长期潜伏）
+ */
+router.post('/email', requireAuth, async (req, res) => {
+  const { email, code, password } = req.body || {};
+  const u = findUserById(req.user.id);
+  if (!u) return res.status(401).json({ error: '请先登录' });
+
+  // 1) 密码确认
+  if (!password) return res.status(400).json({ error: '请输入当前密码以确认身份' });
+  const pwdOk = isSha256Hex(password)
+    ? verifyPassword(String(password), u.passwordHash)
+    : verifyPassword(String(password), u.passwordHash);
+  if (!pwdOk) {
+    eventLog(req, '更换邮箱失败', '密码不正确', 'error');
+    return res.status(403).json({ error: '密码不正确' });
+  }
+
+  // 2) 邮箱格式与占用检查
+  const parsed = parseEmail(email);
+  if (!parsed.valid) return res.status(400).json({ error: parsed.label });
+  const newEmail = parsed.email;
+
+  if (newEmail === (u.email || '').toLowerCase()) {
+    return res.status(400).json({ error: '新邮箱与当前绑定邮箱相同' });
+  }
+  const occupied = findUserByEmail(newEmail);
+  if (occupied && occupied.id !== u.id) {
+    return res.status(409).json({ error: '该邮箱已被其他账号使用' });
+  }
+
+  // 3) 人机验证（email 场景）
+  if (geetestConfigured('email')) {
+    const gt = await verifyAnyCaptcha('email', req.body, { ip: clientIp(req) });
+    if (!gt.ok) {
+      eventLog(req, '更换邮箱人机验证失败', String(gt.reason || '').slice(0, 60), 'error');
+      return res.status(400).json({
+        error: '人机验证未通过，请重新完成验证',
+        code: 'GEETEST_FAILED',
+        reason: gt.reason,
+      });
+    }
+  }
+
+  // 4) 验证码校验
+  if (!/^\d{6}$/.test(String(code || ''))) {
+    return res.status(400).json({ error: '请输入 6 位邮箱验证码' });
+  }
+  const checked = consumeCode(newEmail, code, 'email');
+  if (!checked.ok) {
+    return res.status(400).json({ error: checked.error });
+  }
+
+  // 5) 执行更换
+  const oldEmail = u.email || '';
+  u.email = newEmail;
+  u.emailDomain = parsed.domain;
+  save('users');
+
+  // 6) 使该账号其他会话失效（保留当前会话）
+  const currentToken = sessionToken(req);
+  const removed = db.sessions.filter((s) => s.userId === u.id && s.token !== currentToken).length;
+  db.sessions = db.sessions.filter((s) => s.userId !== u.id || s.token === currentToken);
+  if (removed) save('sessions');
+
+  notifyUser(u.id, {
+    category: 'system',
+    level: 'success',
+    title: '绑定邮箱已更换',
+    content: `你的登录邮箱已从 ${oldEmail || '（未绑定）'} 更换为 ${newEmail}。如非本人操作，请立即联系管理员。`,
+    link: '/me',
+  });
+  eventLog(req, '更换绑定邮箱', `${oldEmail || '-'} → ${newEmail}（其他会话下线 ${removed} 个）`);
+
+  res.json({
+    ok: true,
+    email: newEmail,
+    emailDomain: parsed.domain,
+    // 其他设备已被强制下线
+    sessionsRevoked: removed,
   });
 });
 
