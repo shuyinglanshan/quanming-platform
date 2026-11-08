@@ -91,6 +91,9 @@ export function getDb() {
   if (sessC2.length && !sessC2.includes('expired_reason')) {
     db.exec('ALTER TABLE sessions ADD COLUMN expired_reason TEXT');
   }
+  if (sessC2.length && !sessC2.includes('last_heartbeat_at')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN last_heartbeat_at INTEGER');
+  }
   if (sessC2.length && !sessC2.includes('ip')) {
     db.exec('ALTER TABLE sessions ADD COLUMN ip TEXT');
   }

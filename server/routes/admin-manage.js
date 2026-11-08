@@ -779,6 +779,7 @@ router.get('/sessions', requirePermission('users'), (req, res) => {
     .filter((s) => s.expiresAt > now)
     .map((s) => {
       const u = findUserById(s.userId);
+      const lastBeat = s.lastHeartbeatAt || s.lastActiveAt || s.createdAt;
       return {
         sessionId: s.sessionId || '—',
         userId: s.userId,
@@ -789,6 +790,10 @@ router.get('/sessions', requirePermission('users'), (req, res) => {
         ua: s.ua || '',
         createdAt: s.createdAt,
         lastActiveAt: s.lastActiveAt || s.createdAt,
+        // 心跳时间：判断会话是否仍在使用的依据
+        lastHeartbeatAt: lastBeat,
+        // 距离上次心跳的秒数，便于一眼看出是否「挂机」
+        heartbeatAgo: Math.max(0, Math.floor((now - lastBeat) / 1000)),
         expiresAt: s.expiresAt,
         // 是否为本请求所在会话
         current: s.sessionId === req.sessionId,

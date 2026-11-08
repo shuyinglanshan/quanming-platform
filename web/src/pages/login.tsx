@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AtSign, CircleAlert, Eye, EyeOff, KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, Smartphone, User as UserIcon,
+import { GeetestCaptcha, type GeetestHandle, type AnyCaptchaPayload } from '@/components/geetest-captcha';
+import { AtSign, CircleAlert, Eye, EyeOff, KeyRound, Loader2, LogIn, MailCheck, ShieldCheck, User as UserIcon,
   Inbox,
 } from 'lucide-react';
 import { AuthShell } from '@/components/auth-shell';
@@ -19,10 +20,8 @@ type Mode = 'password' | 'code';
 
 function detectKind(value: string): { icon: any; hint: string } {
   const v = value.trim();
-  if (!v) return { icon: UserIcon, hint: '邮箱 / 手机号 / 用户名 均可登录' };
+  if (!v) return { icon: UserIcon, hint: '邮箱或用户名登录' };
   if (v.includes('@')) return { icon: AtSign, hint: '使用邮箱登录' };
-  if (/^1\d{10}$/.test(v)) return { icon: Smartphone, hint: '使用手机号登录' };
-  if (/^1\d+$/.test(v)) return { icon: Smartphone, hint: '手机号需为 11 位数字' };
   return { icon: UserIcon, hint: '使用用户名登录' };
 }
 
@@ -40,6 +39,10 @@ export default function LoginPage() {
   const [code, setCode] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
+  // 极验人机验证
+  const gtRef = useRef<GeetestHandle>(null);
+  const [gtPayload, setGtPayload] = useState<AnyCaptchaPayload | null>(null);
+  const [gtConfigured, setGtConfigured] = useState(false);
   const [sending, setSending] = useState(false);
   const [sentOnce, setSentOnce] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -58,6 +61,8 @@ export default function LoginPage() {
   }, [countdown]);
 
   const finish = (u: User) => {
+    // 登录成功即启动心跳（页面可见且有操作时定时上报）
+    import('@/lib/heartbeat').then((m) => m.startHeartbeat());
     setUser(u);
     toast.success(`欢迎回来，${u.nickname}`, {
       description: u.role === 'admin' ? '管理员身份已确认，可进入管理后台' : '祝你找到心仪的圈名',
@@ -67,8 +72,9 @@ export default function LoginPage() {
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identifier.trim()) return toast.error('请输入邮箱、手机号或用户名');
+    if (!identifier.trim()) return toast.error('请输入邮箱或用户名');
     if (!password) return toast.error('请输入密码');
+    if (gtConfigured && !gtPayload) return toast.error('请先完成人机验证');
     setLoading(true);
     try {
       // 密码先做 SHA-256 变换，避免明文经过网络（服务端仍会 bcrypt 加盐存储）
@@ -77,6 +83,7 @@ export default function LoginPage() {
         identifier: identifier.trim(),
         password: hashed,
         pwdAlg: 'sha256',
+        ...(gtPayload || {}),
       });
       finish(data.user);
     } catch (err) {
@@ -122,7 +129,7 @@ export default function LoginPage() {
   return (
     <AuthShell
       title="登录小天才圈名平台"
-      subtitle="邮箱、手机号或用户名均可登录，继续管理你的圈名与归属申请。"
+      subtitle="使用邮箱或用户名登录，继续管理你的圈名与归属申请。"
       footer={
         <>
           还没有账号？
@@ -152,7 +159,7 @@ export default function LoginPage() {
                   id="identifier"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="邮箱 / 手机号 / 用户名"
+                  placeholder="邮箱或用户名"
                   autoComplete="username"
                   className="pl-10"
                 />
@@ -182,6 +189,15 @@ export default function LoginPage() {
                   {showPwd ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>人机验证</Label>
+              <GeetestCaptcha
+                scene="login"
+                ref={gtRef}
+                onPayload={setGtPayload}
+                onConfiguredChange={setGtConfigured}
+              />
             </div>
             <Button type="submit" size="lg" className="w-full" disabled={loading}>
               {loading ? <Loader2 className="size-4 animate-spin" /> : <LogIn className="size-4" />}
@@ -254,7 +270,7 @@ export default function LoginPage() {
       <div className={cn('mt-5 flex items-start gap-2 rounded-xl border border-white/8 bg-white/[0.03] p-3 text-[11.5px] leading-relaxed text-slate-400')}>
         <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
         <span>
-          支持邮箱、手机号、用户名三种方式登录；邮箱验证码 10 分钟内有效。
+          支持邮箱验证码或密码登录；验证码 10 分钟内有效。
           若长时间未收到验证码，请检查垃圾邮件箱或加入交流群联系管理员。
         </span>
       </div>

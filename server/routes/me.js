@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import express from 'express';
 import { get, all } from '../lib/db-sqlite.js';
 import { db, save } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
+import { requireAuth, touchHeartbeat, heartbeatInterval, sessionIdleTimeout } from '../lib/auth.js';
 import { validatePassword, sanitizeText, normalizePhone } from '../lib/util.js';
 import { hashPassword, verifyPassword, isSha256Hex } from '../lib/password.js';
 import { eventLog } from '../lib/logger.js';
@@ -377,6 +377,36 @@ router.get('/names/:id/image', requireAuth, (req, res) => {
     imageSha256: name.imageSha256 || '',
     pending: mine.filter((r) => r.status === 'pending').length,
     requests: mine.slice(0, 10).map((r) => shapeAvatarRequest(r)),
+  });
+});
+
+
+/* ================= 会话心跳 ================= */
+
+/**
+ * 上报心跳
+ *
+ * 前端在页面可见且有用户操作时定时调用（默认 60 秒）。
+ * 服务端据此判断会话是否仍在使用；
+ * 超过闲置阈值（默认 3 天）未上报即踢出。
+ */
+router.post('/heartbeat', requireAuth, (req, res) => {
+  const result = touchHeartbeat(req.session);
+  if (!result.ok) {
+    return res.status(401).json({
+      error: '登录过期，请重新登录',
+      code: 'SESSION_EXPIRED',
+      reason: result.reason || 'idle',
+    });
+  }
+  res.json({
+    ok: true,
+    // 下次心跳建议间隔（毫秒）
+    interval: heartbeatInterval(),
+    // 闲置超时（毫秒），前端可据此提示
+    idleTimeout: sessionIdleTimeout(),
+    // 会话剩余绝对有效期
+    expiresIn: Math.max(0, (req.session?.expiresAt || 0) - Date.now()),
   });
 });
 

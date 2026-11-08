@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db, save, findUserById, hasPermission } from './db.js';
+import { eventLog } from './logger.js';
 
 export const SESSION_COOKIE = 'qm_sid';
 /** 会话绝对有效期（无论是否活跃，到期必须重新登录） */
@@ -7,7 +8,7 @@ const SESSION_TTL = 1000 * 60 * 60 * 24 * 30; // 30 天
 /** 闲置超时：超过该时长没有任何请求，自动踢出（默认 3 天） */
 const IDLE_TIMEOUT = process.env.SESSION_IDLE_SECONDS
   ? Math.max(1, Number(process.env.SESSION_IDLE_SECONDS)) * 1000
-  : Math.max(1, Number(process.env.SESSION_IDLE_HOURS) || 168) * 60 * 60 * 1000;
+  : Math.max(1, Number(process.env.SESSION_IDLE_HOURS) || 72) * 60 * 60 * 1000;
 /** 活跃时间回写节流：避免每个请求都写库 */
 const TOUCH_INTERVAL = 5 * 60 * 1000;
 
@@ -80,6 +81,8 @@ export function createSession(userId, meta = {}) {
     ua: (meta.ua || '').slice(0, 200),
     createdAt: now,
     lastActiveAt: now,
+    // 心跳时间：由前端定时上报，是判断「是否真正在使用」的唯一依据
+    lastHeartbeatAt: now,
     expiresAt: now + SESSION_TTL,
     expiredReason: null,
   });
@@ -137,15 +140,22 @@ export function attachUser(req, _res, next) {
 
   // 绝对过期
   if (session.expiresAt < now) {
-    expireSession(session, 'absolute');
+    expireSession(session, 'absolute', req);
     req.sessionExpiredReason = 'expired';
     return next();
   }
 
-  // 闲置超时（默认 3 天）
-  const lastActive = Number(session.lastActiveAt || session.createdAt || 0);
-  if (lastActive && now - lastActive > IDLE_TIMEOUT) {
-    expireSession(session, 'idle');
+  // 闲置超时（默认 3 天，基于**心跳**而非普通请求）
+  //
+  // 为什么用心跳而不是 lastActiveAt：
+  //   只要有请求就会刷新 lastActiveAt，而用户可能只是开着页面没操作
+  //   （或被脚本/轮询持续打请求），导致「一直在用」的假象。
+  //   心跳由前端在页面可见且用户活跃时定时上报，更能代表真实使用状态。
+  const lastBeat = Number(
+    session.lastHeartbeatAt || session.lastActiveAt || session.createdAt || 0,
+  );
+  if (lastBeat && now - lastBeat > IDLE_TIMEOUT) {
+    expireSession(session, 'idle', req);
     req.sessionExpiredReason = 'idle';
     return next();
   }
@@ -153,14 +163,14 @@ export function attachUser(req, _res, next) {
   const user = findUserById(session.userId);
   if (!user || user.status === 'banned' || user.deleted) {
     req.sessionExpiredReason = 'disabled';
-    if (session) expireSession(session, 'disabled');
+    if (session) expireSession(session, 'disabled', req);
     return next();
   }
 
   // 防越权：会话创建时的角色必须与当前一致，
   // 否则说明权限被变更，旧会话不能继续沿用（尤其降权场景）
   if (session.role && session.role !== user.role) {
-    expireSession(session, 'role-changed');
+    expireSession(session, 'role-changed', req);
     req.sessionExpiredReason = 'role-changed';
     return next();
   }
@@ -228,12 +238,21 @@ export function assertSessionId(req, res, next) {
 
 
 /** 标记并移除会话，记录过期原因供审计 */
-function expireSession(session, reason) {
+function expireSession(session, reason, req = null) {
   if (!session) return;
   session.expiredReason = reason;
   db.sessions = db.sessions.filter((s) => s.token !== session.token);
   save('sessions');
-  eventLog(null, '会话失效', `${session.sessionId || '-'} · ${reason}`);
+  // eventLog 依赖 req.get()，没有请求上下文时只写控制台，避免崩溃
+  try {
+    if (req && typeof req.get === 'function') {
+      eventLog(req, '会话失效', `${session.sessionId || '-'} · ${reason}`);
+    } else {
+      console.log('[session] 会话失效:', session.sessionId || '-', '·', reason);
+    }
+  } catch {
+    /* 审计失败绝不影响主流程 */
+  }
 }
 
 export function requireAuth(req, res, next) {
@@ -280,3 +299,32 @@ export function requireStaff(req, res, next) {
 }
 
 export { hasPermission };
+
+/**
+ * 上报心跳
+ *
+ * 由前端在「页面可见 + 用户有操作」时定时调用（默认 60 秒一次）。
+ * 服务端只更新 lastHeartbeatAt，不延长绝对有效期。
+ *
+ * @returns {{ok:boolean, reason?:string, nextIn?:number}}
+ */
+export function touchHeartbeat(session) {
+  if (!session) return { ok: false, reason: 'NO_SESSION' };
+  const now = Date.now();
+  const lastBeat = Number(session.lastHeartbeatAt || 0);
+  // 节流：30 秒内重复上报不写库，避免多标签页刷爆
+  if (lastBeat && now - lastBeat < 30_000) {
+    return { ok: true, throttled: true };
+  }
+  session.lastHeartbeatAt = now;
+  session.lastActiveAt = now;
+  save('sessions');
+  return { ok: true };
+}
+
+/** 心跳间隔建议值（毫秒），供前端定时器使用 */
+export function heartbeatInterval() {
+  // 注意：先换算成毫秒再取 max，否则 Math.max(15000, 60)*1000 = 15000000（4 小时）
+  const sec = Math.max(15, Number(process.env.SESSION_HEARTBEAT_SECONDS) || 60);
+  return sec * 1000;
+}

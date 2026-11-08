@@ -6,7 +6,7 @@ import { Check, CircleAlert, Eye, EyeOff, Loader2, MailCheck, Smartphone, UserPl
 } from 'lucide-react';
 import { AuthShell } from '@/components/auth-shell';
 import { EmailField } from '@/components/email-field';
-import { SliderCaptcha, type CaptchaState } from '@/components/slider-captcha';
+import { GeetestCaptcha, type GeetestHandle, type AnyCaptchaPayload } from '@/components/geetest-captcha';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,10 +35,8 @@ export default function RegisterPage() {
   const redirect = params.get('redirect') || '/me?tab=claim';
   const { setUser, user, mailConfigured } = useAuth();
 
-  const [method, setMethod] = useState<'email' | 'phone'>('email');
   const [email, setEmail] = useState('');
   const [emailValid, setEmailValid] = useState(false);
-  const [phone, setPhone] = useState('');
   const [username, setUsername] = useState('');
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
@@ -50,8 +48,10 @@ export default function RegisterPage() {
   const [sending, setSending] = useState(false);
   const [sentOnce, setSentOnce] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [captcha, setCaptcha] = useState<CaptchaState>({ id: null, verified: false });
-  const [captchaKey, setCaptchaKey] = useState(0);
+  // 极验人机验证凭据（服务端二次校验）
+  const gtRef = useRef<GeetestHandle>(null);
+  const [gtPayload, setGtPayload] = useState<AnyCaptchaPayload | null>(null);
+  const [gtConfigured, setGtConfigured] = useState(false);
   const [checking, setChecking] = useState<{ username?: string; phone?: string }>({});
   const timerRef = useRef<number | null>(null);
 
@@ -67,24 +67,17 @@ export default function RegisterPage() {
     };
   }, [countdown]);
 
-  const onCaptcha = useCallback((state: CaptchaState) => setCaptcha(state), []);
-
-  /* 用户名 / 手机号 实时可用性检查 */
+  /* 用户名实时可用性检查 */
   useEffect(() => {
     const u = username.trim();
-    const p = phone.trim();
-    if (!u && !p) return;
+    if (!u) return;
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const query = new URLSearchParams();
-        if (u.length >= 4) query.set('username', u);
-        if (p.length === 11) query.set('phone', p);
-        if (![...query.keys()].length) return;
+        if (u.length < 4) return;
         const res = await api.get<{
           username?: { taken: boolean; valid: boolean; error: string };
-          phone?: { taken: boolean; valid: boolean; error: string };
-        }>(`/auth/availability?${query}`);
+        }>(`/auth/availability?username=${encodeURIComponent(u)}`);
         if (cancelled) return;
         setChecking({
           username: res.username
@@ -93,13 +86,6 @@ export default function RegisterPage() {
               : res.username.valid
                 ? '用户名可用'
                 : res.username.error
-            : undefined,
-          phone: res.phone
-            ? res.phone.taken
-              ? '该手机号已注册'
-              : res.phone.valid
-                ? '手机号可用'
-                : res.phone.error
             : undefined,
         });
       } catch {
@@ -110,22 +96,24 @@ export default function RegisterPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [username, phone]);
+  }, [username]);
 
   const strength = useMemo(() => strengthOf(password), [password]);
   const pwdOk = password.length >= 8 && /[a-zA-Z]/.test(password) && /\d/.test(password);
   const pwdMatch = confirm.length > 0 && password === confirm;
   const nickOk = [...nickname.trim()].length >= 2 && [...nickname.trim()].length <= 16;
   const usernameOk = USERNAME_RE.test(username.trim());
-  const phoneOk = PHONE_RE.test(phone.trim());
 
   const sendCode = async () => {
-    // 只在邮箱注册模式下校验邮箱，避免切到手机号后仍误报
-    if (method !== 'email') return;
     if (!emailValid) return toast.error('请输入正确的邮箱地址');
+    if (gtConfigured && !gtPayload) return toast.error('请先完成人机验证');
     setSending(true);
     try {
-      await api.post('/auth/send-code', { email: email.trim(), purpose: 'register' });
+      await api.post('/auth/send-code', {
+        email: email.trim(),
+        purpose: 'register',
+        ...(gtPayload || {}),
+      });
       setCountdown(60);
       setSentOnce(true);
       toast.success('验证码已发送至邮箱', { description: '10 分钟内有效，请注意查收（含垃圾箱）' });
@@ -140,12 +128,12 @@ export default function RegisterPage() {
     e.preventDefault();
     if (!usernameOk) return toast.error('用户名需 4-20 位，以字母开头，仅含字母、数字与下划线');
     if (!nickOk) return toast.error('昵称需要 2-16 个字符');
-    if (method === 'email' && !emailValid) return toast.error('请输入正确的邮箱地址');
-    if (method === 'phone' && !phoneOk) return toast.error('请输入有效的手机号');
+    if (!emailValid) return toast.error('请输入正确的邮箱地址');
     if (!pwdOk) return toast.error('密码至少 8 位，且需包含字母与数字');
     if (!pwdMatch) return toast.error('两次输入的密码不一致');
-    if (method === 'email' && !/^\d{6}$/.test(code)) return toast.error('请输入 6 位邮箱验证码');
-    if (!captcha.verified) return toast.error('请先完成滑块验证');
+    if (!/^\d{6}$/.test(code)) return toast.error('请输入 6 位邮箱验证码');
+    // 极验已配置时必须通过；未配置（如本地未填凭据）则跳过，便于开发调试
+    if (gtConfigured && !gtPayload) return toast.error('请先完成人机验证');
     if (!agree) return toast.error('请先同意用户协议与隐私政策');
 
     setLoading(true);
@@ -153,29 +141,23 @@ export default function RegisterPage() {
       // 密码 SHA-256 变换后再提交；强度已在本地校验
       const hashedPassword = await sha256Hex(password);
       const payload: Record<string, unknown> = {
-        method,
         username: username.trim(),
         nickname: nickname.trim(),
         password: hashedPassword,
         pwdAlg: 'sha256',
-        captchaId: captcha.id,
-        captchaCompleted: captcha.verified,
+        email: email.trim(),
+        code,
+        ...(gtPayload || {}),
       };
-      if (method === 'email') {
-        payload.email = email.trim();
-        payload.code = code;
-      } else {
-        payload.phone = phone.trim();
-      }
       const data = await api.post<{ user: User }>('/auth/register', payload);
       setUser(data.user);
+      import('@/lib/heartbeat').then((m) => m.startHeartbeat());
       toast.success('注册成功，欢迎加入', { description: '现在可以提交你的第一个圈名归属申请了' });
       navigate(redirect, { replace: true });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '注册失败，请稍后重试');
-      // 滑块一次性，失败后必须重新验证
-      setCaptcha({ id: null, verified: false });
-      setCaptchaKey((k) => k + 1);
+      // 极验 lot_number 一次性，失败后必须重新验证
+      setGtPayload(null);
     } finally {
       setLoading(false);
     }
@@ -184,7 +166,7 @@ export default function RegisterPage() {
   return (
     <AuthShell
       title="创建你的账号"
-      subtitle="支持邮箱或手机号注册，注册后即可登记属于你的圈名。"
+      subtitle="使用邮箱注册，注册后即可登记属于你的圈名。"
       footer={
         <>
           已经有账号了？
@@ -195,52 +177,17 @@ export default function RegisterPage() {
       }
     >
       <form onSubmit={submit} className="space-y-4">
-        <Tabs value={method} onValueChange={(v) => setMethod(v as 'email' | 'phone')}>
-          <TabsList className="mb-4 w-full">
-            <TabsTrigger value="email" className="flex-1">
-              <MailCheck className="size-3.5" /> 邮箱注册
-            </TabsTrigger>
-            <TabsTrigger value="phone" className="flex-1">
-              <Smartphone className="size-3.5" /> 手机号注册
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {method === 'email' ? (
-          <div className="space-y-2">
-            <Label htmlFor="reg-email">邮箱地址</Label>
-            <EmailField
-              id="reg-email"
-              value={email}
-              onChange={setEmail}
-              onValidChange={(info) => setEmailValid(info.valid)}
-              statusMode="register"
-              placeholder="请输入邮箱地址，例如 name@example.com"
-            />
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <Label htmlFor="reg-phone">手机号</Label>
-            <div className="relative">
-              <Smartphone className="absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-slate-500" />
-              <Input
-                id="reg-phone"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
-                placeholder="请输入 11 位手机号"
-                inputMode="numeric"
-                autoComplete="tel"
-                className={cn('pl-10', phone && !phoneOk && 'border-rose-400/40')}
-              />
-            </div>
-            {checking.phone && (
-              <p className={cn('flex items-center gap-1 text-[11.5px]', checking.phone.endsWith('可用') ? 'text-emerald-300' : 'text-rose-300')}>
-                {checking.phone.endsWith('可用') ? <Check className="size-3" /> : <CircleAlert className="size-3" />}
-                {checking.phone}
-              </p>
-            )}
-          </div>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="reg-email">邮箱地址</Label>
+          <EmailField
+            id="reg-email"
+            value={email}
+            onChange={setEmail}
+            onValidChange={(info) => setEmailValid(info.valid)}
+            statusMode="register"
+            placeholder="请输入邮箱地址，例如 name@example.com"
+          />
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -272,8 +219,23 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        {method === 'email' && (
-          <div className="space-y-2">
+        {/* 人机验证：必须先通过才能发送验证码 */}
+        <div className="space-y-2">
+          <Label>
+            人机验证 <span className="text-rose-300">*</span>
+          </Label>
+          <GeetestCaptcha
+            scene="register"
+            ref={gtRef}
+            onPayload={setGtPayload}
+            onConfiguredChange={setGtConfigured}
+          />
+          {gtConfigured && !gtPayload && (
+            <p className="text-[11px] text-slate-500">完成验证后才能发送邮箱验证码</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
             <Label htmlFor="reg-code">邮箱验证码</Label>
             <div className="flex gap-2">
               <Input
@@ -288,7 +250,7 @@ export default function RegisterPage() {
                 type="button"
                 variant="secondary"
                 className="h-11 w-[6.6rem] shrink-0 px-2 text-[12px]"
-                disabled={sending || countdown > 0 || !emailValid}
+                disabled={sending || countdown > 0 || !emailValid || (gtConfigured && !gtPayload)}
                 onClick={sendCode}
               >
                 {sending ? <Loader2 className="size-3.5 animate-spin" /> : <MailCheck className="size-3.5" />}
@@ -305,13 +267,12 @@ export default function RegisterPage() {
                 </span>
               </div>
             )}
-          </div>
-        )}
+        </div>
 
-        {method === 'email' && mailConfigured === false && (
+        {mailConfigured === false && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-300/20 bg-amber-400/[0.08] p-3 text-[11.5px] leading-relaxed text-amber-200/90">
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-            平台尚未完成邮箱发信配置，暂时无法发送邮箱验证码。可改用手机号注册，或联系管理员完成邮箱配置。
+            平台尚未完成邮箱发信配置，暂时无法发送邮箱验证码。请联系管理员完成邮箱配置后再注册。
           </div>
         )}
 
@@ -361,11 +322,6 @@ export default function RegisterPage() {
             autoComplete="new-password"
             className={cn(confirm && !pwdMatch && 'border-rose-400/40')}
           />
-        </div>
-
-        <div className="space-y-2">
-          <Label>安全验证</Label>
-          <SliderCaptcha onChange={onCaptcha} resetKey={captchaKey} disabled={loading} />
         </div>
 
         <label className="flex cursor-pointer items-start gap-2 text-[11.5px] leading-relaxed text-slate-400 select-none">

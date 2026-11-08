@@ -41,9 +41,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const data = await api.get<{ user: User | null; mailConfigured: boolean; sessionId?: string | null }>('/auth/me');
       setUser(data.user);
       setMailConfigured(data.mailConfigured);
+      // 会话恢复完成，放行后续请求（避免刷新瞬间误报「会话校验失败」）
+      const { markSidReady } = await import('./crypto');
+      markSidReady();
+      // 已登录则启动心跳（页面可见且有操作时定时上报）
+      if (data.user) {
+        const { startHeartbeat } = await import('./heartbeat');
+        startHeartbeat();
+      }
       return data.user;
     } catch {
       setUser(null);
+      const { markSidReady } = await import('./crypto');
+      markSidReady();
       return null;
     } finally {
       setLoading(false);
@@ -60,6 +70,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* ignore */
     }
+    const { stopHeartbeat } = await import('./heartbeat');
+    stopHeartbeat();
     setUser(null);
   }, []);
 

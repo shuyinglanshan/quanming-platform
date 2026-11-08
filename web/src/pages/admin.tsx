@@ -6,6 +6,8 @@ import {
   Clock3,
   Gauge,
   Gavel,
+  Database,
+  MonitorSmartphone,
   LayoutDashboard,
   Mail,
   Megaphone,
@@ -33,6 +35,9 @@ import { NotificationsPanel } from '@/components/admin/notifications-panel';
 import { MailPanel } from '@/components/admin/mail-panel';
 import { SecurityPanel } from '@/components/admin/security-panel';
 import { AvatarsPanel } from '@/components/admin/avatars-panel';
+import { ExportPanel } from '@/components/admin/export-panel';
+import { GeetestPanel } from '@/components/admin/geetest-panel';
+import { SessionsPanel } from '@/components/admin/sessions-panel';
 import { FeedbackPanel } from '@/components/admin/feedback-panel';
 import { RolesPanel } from '@/components/admin/roles-panel';
 import { CourtsPanel } from '@/components/admin/courts-panel';
@@ -98,6 +103,9 @@ const NAV: NavItem[] = [
   { key: 'mail', label: '邮箱配置', icon: Mail, permission: 'settings' },
   { key: 'security', label: '访问风控', icon: ShieldHalf, permission: 'settings', badge: (s) => s?.cards.securityEvents ?? 0 },
   { key: 'logs', label: '访问日志', icon: Activity, permission: 'logs' },
+  { key: 'export', label: '数据导出', icon: Database, permission: 'settings' },
+  { key: 'geetest', label: '人机验证', icon: ShieldCheck, permission: 'settings' },
+  { key: 'sessions', label: '在线会话', icon: MonitorSmartphone, permission: 'users' },
 ];
 
 export default function AdminPage() {
@@ -264,6 +272,9 @@ export default function AdminPage() {
           {tab === 'claims' && <ClaimsPanel onChanged={() => load(true)} />}
           {tab === 'appeals' && <AppealsPanel onChanged={() => load(true)} />}
           {tab === 'avatars' && <AvatarsPanel onChanged={() => load(true)} />}
+          {tab === 'export' && <ExportPanel />}
+          {tab === 'geetest' && <GeetestPanel onChanged={() => load(true)} />}
+          {tab === 'sessions' && <SessionsPanel />}
           {tab === 'courts' && <CourtsPanel onChanged={() => load(true)} />}
           {tab === 'feedback' && <FeedbackPanel onChanged={() => load(true)} />}
           {tab === 'roles' && <RolesPanel />}
