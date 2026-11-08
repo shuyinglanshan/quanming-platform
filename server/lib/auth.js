@@ -16,21 +16,42 @@ export function sessionIdleTimeout() {
 }
 
 /**
- * 生成唯一会话 ID
+ * 角色标识前缀
  *
- * 要求「无规律」：不能用 userId/时间戳等可预测信息拼接，
- * 也不能用递增序列（否则可枚举、可横向越权）。
- * 这里用 24 字节 CSPRNG 随机数转 base32 风格字符串，32 字符。
+ * 会话 ID 首段体现角色，便于运维一眼识别、也作为服务端校验的第一道关口：
+ *   A = admin        平台管理员
+ *   S = superadmin   超级管理员
+ *   R = assessor     审核员
+ *   U = user         普通用户
+ *
+ * 注意：角色标识只用于**识别与快速校验**，真正的权限判定仍以
+ * 服务端会话记录里的 role 快照为准，绝不信任客户端传来的前缀。
  */
-function generateSessionId() {
+const ROLE_PREFIX = {
+  admin: 'A',
+  superadmin: 'S',
+  assessor: 'R',
+  user: 'U',
+};
+
+export function sessionRolePrefix(role) {
+  return ROLE_PREFIX[role] || 'U';
+}
+
+/**
+ * 生成唯一会话 ID：角色前缀 + 随机串
+ *
+ * 格式：<角色字母>-<24 位随机>，例如 A-K7M2XP9QRT4NVW8YHZ3BCD5
+ * 随机部分用 CSPRNG，不含 userId/时间戳，无法枚举或预测。
+ */
+function generateSessionId(role) {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 去掉易混淆的 I/O/0/1
   const bytes = crypto.randomBytes(24);
   let out = '';
   for (let i = 0; i < bytes.length; i += 1) {
     out += alphabet[bytes[i] % alphabet.length];
   }
-  // 加时间前缀便于人工识别，但**不含任何用户/权限信息**
-  return out;
+  return `${sessionRolePrefix(role)}-${out}`;
 }
 
 /**
@@ -42,10 +63,10 @@ export function createSession(userId, meta = {}) {
   const token = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
 
-  // 保证 sessionId 全局唯一
-  let sessionId = generateSessionId();
+  // 保证 sessionId 全局唯一（含角色前缀）
+  let sessionId = generateSessionId(meta.role);
   while (db.sessions.some((s) => s.sessionId === sessionId)) {
-    sessionId = generateSessionId();
+    sessionId = generateSessionId(meta.role);
   }
 
   db.sessions = db.sessions.filter((s) => s.expiresAt > now);
@@ -156,6 +177,55 @@ export function attachUser(req, _res, next) {
   req.sessionId = session.sessionId;
   next();
 }
+
+/**
+ * 校验请求携带的会话 ID 是否与服务端记录一致
+ *
+ * 设计意图：cookie 里的 token 是长期凭证，一旦泄露即可长期冒用；
+ * 会话 ID 每次请求都随加密载荷一起发送，等于给每个请求加了一道
+ * 「本次会话身份」的二次确认：
+ *   - 只偷到 cookie 没有 sessionId → 拒绝
+ *   - sessionId 与 token 不是同一次登录 → 拒绝
+ *   - 角色前缀与实际角色不符 → 拒绝（防越权猜测）
+ *
+ * 低风险只读接口（浏览圈名、热榜等）豁免，避免无谓开销。
+ */
+export function assertSessionId(req, res, next) {
+  if (!req.user || !req.session) return next();
+
+  const provided = String(req.sessionIdFromBody || req.sessionIdFromHeader || '').trim();
+  if (!provided) {
+    // 除低风险只读接口外，一律要求携带会话 ID
+    // （低风险接口已在 index.js 的 isLowRiskRequest 中提前放行，
+    //   能走到这里的 GET 都属于需要鉴权的接口，如后台列表）
+    return res.status(401).json({
+      error: '会话校验失败，请刷新页面后重新登录',
+      code: 'SESSION_ID_REQUIRED',
+    });
+  }
+
+  // 与当前 cookie 对应的会话比对
+  if (provided !== req.session.sessionId) {
+    try { eventLog(req, '会话ID不匹配', `${provided.slice(0, 32)}`); } catch { /* 审计失败不影响主流程 */ }
+    return res.status(401).json({
+      error: '会话校验失败，请重新登录',
+      code: 'SESSION_ID_MISMATCH',
+    });
+  }
+
+  // 角色前缀必须与实际角色一致（防止伪造他人角色标识）
+  const expectPrefix = sessionRolePrefix(req.user.role);
+  if (!provided.startsWith(`${expectPrefix}-`)) {
+    try { eventLog(req, '会话角色不匹配', `${provided.slice(0, 12)}`); } catch { /* 同上 */ }
+    return res.status(403).json({
+      error: '会话角色校验失败，请重新登录',
+      code: 'SESSION_ROLE_MISMATCH',
+    });
+  }
+
+  next();
+}
+
 
 /** 标记并移除会话，记录过期原因供审计 */
 function expireSession(session, reason) {

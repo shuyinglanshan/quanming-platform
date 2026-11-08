@@ -18,8 +18,8 @@ const failures = new Map(); // ip -> { count, resetAt }
 const WINDOW = 60_000;
 const MAX_FAIL_PER_WINDOW = 20;
 
-/** 仅作用于写操作与登录类接口，GET 不需要加密 */
-const PROTECTED_PREFIXES = ['/api/auth', '/api/me', '/api/claims', '/api/appeals', '/api/admin'];
+/** 所有 /api 路径都参与解密（GET 也可带会话 ID 头） */
+const PROTECTED_PREFIXES = ['/api'];
 
 /**
  * 生产环境强制加密的敏感接口（JSON 请求体）
@@ -65,14 +65,50 @@ function noteFailure(ip) {
   }
 }
 
+/** 低风险只读接口：豁免会话 ID 校验（浏览圈名、热榜等） */
+const LOW_RISK_GET = [
+  /^\/api\/names$/,          // 圈名列表
+  /^\/api\/names\/hot/,      // 热榜
+  /^\/api\/names\/stats/,    // 公开统计
+  /^\/api\/names\/suggest/,  // 搜索建议
+  /^\/api\/names\/[\w-]+$/ , // 圈名详情
+  /^\/api\/crypto\/pubkey/,  // 公钥
+  /^\/api\/auth\/me$/,       // 恢复登录态（此时尚无 SID）
+  /^\/api\/health/,          // 健康检查
+  /^\/api\/feedback\/kinds/, // 反馈类型
+];
+
+export function isLowRiskRequest(req) {
+  if (req.method.toUpperCase() !== 'GET') return false;
+  const path = req.path.split('?')[0];
+  return LOW_RISK_GET.some((re) => re.test(path));
+}
+
 export function decryptRequest(req, res, next) {
+  // GET 也可以带会话 ID（头部），供鉴权使用
+  const sidHeader = req.get('x-qm-sid');
+  if (sidHeader) req.sessionIdFromHeader = String(sidHeader).slice(0, 64);
+
   if (!shouldDecrypt(req)) return next();
   if (!isEncryptedEnvelope(req.body)) {
     // 带 enc 字段但字段不全（或旧版 v1 信封）：明确拒绝，不能当成明文放行
     if (req.body && typeof req.body === 'object' && req.body.enc) {
       return res.status(400).json({ error: '加密请求格式不正确，请刷新页面后重试', code: 'DECRYPT_FAILED' });
     }
-    // 生产环境拒绝敏感接口的明文凭据请求，防止降级为明文被中间人窃取
+    // 强制：所有写方法（POST/PUT/PATCH/DELETE）必须加密，
+    // 仅文件上传（multipart）例外 —— 二进制无法做 JSON 信封加密
+    const isMultipart = (req.get('content-type') || '').includes('multipart/form-data');
+    const isWriteMethod = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method.toUpperCase());
+    // 走到这里说明请求体不是加密信封，写方法一律拒绝
+    if (isWriteMethod && !isMultipart) {
+      eventLog(req, '拒绝明文写请求', `${req.method} ${req.path}`, 'error');
+      return res.status(400).json({
+        error: '该操作必须使用加密请求，请刷新页面后重试',
+        code: 'ENCRYPTION_REQUIRED',
+      });
+    }
+
+    // 兼容旧开关：仍在 STRICT_PATHS 内的接口额外校验
     if (REQUIRE_ENCRYPTED && STRICT_PATHS.has(req.path)) {
       eventLog(req, '拒绝明文敏感请求', `${req.method} ${req.path}`, 'error');
       return res.status(400).json({
@@ -96,6 +132,11 @@ export function decryptRequest(req, res, next) {
     }
     // 只移除协议层字段（_qm_ 前缀）；兼容旧客户端时额外删除无前缀的同名字段，
     // 但**不能**误删业务字段：例如注册接口的 method 承载 'phone' | 'email'
+    // 提取会话 ID（随密文一起传输，攻击者即使拿到 cookie 也无法伪造）
+    if (plain._qm_sid) {
+      req.sessionIdFromBody = String(plain._qm_sid).slice(0, 64);
+      delete plain._qm_sid;
+    }
     delete plain._qm_ts;
     delete plain._qm_nonce;
     delete plain._qm_path;

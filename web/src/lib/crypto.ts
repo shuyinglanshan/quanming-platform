@@ -90,6 +90,8 @@ async function encryptWithKey(
       _qm_nonce: randomNonce(),
       _qm_path: path,
       _qm_method: method.toUpperCase(),
+      // 会话 ID 随密文一起发送（攻击者拿到 cookie 也伪造不了）
+      ...(getSessionId() ? { _qm_sid: getSessionId() } : {}),
     }),
   );
   const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, aes, plaintext);
@@ -182,6 +184,8 @@ async function encryptWithSession(
       // 必须携带 path/method，后端据此做双重绑定校验（防跨接口重放）
       _qm_path: path,
       _qm_method: method.toUpperCase(),
+      // 会话 ID 随密文一起发送（攻击者拿到 cookie 也伪造不了）
+      ...(getSessionId() ? { _qm_sid: getSessionId() } : {}),
     }),
   );
   const buf = await crypto.subtle.encrypt(
@@ -230,6 +234,9 @@ export async function secureFetch(
     'X-QM-Key': header,
     ...(init.headers || {}),
   };
+  // GET 无请求体，会话 ID 走头部
+  const sid = getSessionId();
+  if (sid) headers['X-QM-Sid'] = sid;
 
   let body: string | undefined;
   if (init.body !== undefined) {
@@ -275,4 +282,33 @@ export async function secureFetch(
 /** 当前公钥标识（用于信封 kid 校验） */
 function currentKid(): string {
   return cachedKey?.kid || '';
+}
+
+/* ============================================================
+ * 会话 ID 管理
+ *
+ * 登录后服务端返回 sessionId（形如 A-K7M2XP9QRT4NVW8YHZ3BCD5）。
+ * 之后每个请求都把它一起加密发送，服务端据此做二次身份确认：
+ *   - 只偷到 cookie 没有 sessionId → 拒绝
+ *   - sessionId 与 token 不是同一次登录 → 拒绝
+ *
+ * 存 sessionStorage 而非 localStorage：关闭标签页即失效，更安全。
+ * ============================================================ */
+const SID_KEY = 'qm_sid';
+
+export function setSessionId(sid: string | null) {
+  try {
+    if (sid) sessionStorage.setItem(SID_KEY, sid);
+    else sessionStorage.removeItem(SID_KEY);
+  } catch {
+    /* 隐私模式下 sessionStorage 可能不可用，忽略 */
+  }
+}
+
+export function getSessionId(): string {
+  try {
+    return sessionStorage.getItem(SID_KEY) || '';
+  } catch {
+    return '';
+  }
 }

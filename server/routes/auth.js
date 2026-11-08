@@ -523,7 +523,12 @@ router.post('/login-code', (req, res) => {
 
 /* ---------------- 会话 ---------------- */
 router.get('/me', attachUser, (req, res) => {
-  res.json({ user: req.user ? publicUser(req.user) : null, mailConfigured: isMailConfigured() });
+  // 返回 sessionId 供前端恢复（刷新页面后 sessionStorage 已清空）
+  res.json({
+    user: req.user ? publicUser(req.user) : null,
+    mailConfigured: isMailConfigured(),
+    sessionId: req.session?.sessionId || null,
+  });
 });
 
 router.post('/logout', (req, res) => {

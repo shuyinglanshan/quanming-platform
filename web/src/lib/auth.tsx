@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const data = await api.get<{ user: User | null; mailConfigured: boolean }>('/auth/me');
+      const data = await api.get<{ user: User | null; mailConfigured: boolean; sessionId?: string | null }>('/auth/me');
       setUser(data.user);
       setMailConfigured(data.mailConfigured);
       return data.user;

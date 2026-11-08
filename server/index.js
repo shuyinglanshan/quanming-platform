@@ -12,12 +12,12 @@ import { fileURLToPath } from 'node:url';
 import { hashPassword, pepperStatus } from './lib/password.js';
 
 import { db, persistNow, UPLOAD_DIR, ROOT, uid } from './lib/db.js';
-import { attachUser } from './lib/auth.js';
+import { attachUser, assertSessionId } from './lib/auth.js';
 import { requestLogger } from './lib/logger.js';
 import { isMailConfigured } from './lib/mailer.js';
 import { rateGuard, securitySnapshot } from './lib/guard.js';
 import { securityHeaders, blockPrototypePollution, csrfGuard, requestId, mitmGuard } from './lib/security.js';
-import { decryptRequest, encryptResponseMiddleware } from './lib/crypto-middleware.js';
+import { decryptRequest, encryptResponseMiddleware, isLowRiskRequest } from './lib/crypto-middleware.js';
 import { getPublicKey, ensureKeyPair } from './lib/crypto-layer.js';
 
 import authRoutes from './routes/auth.js';
@@ -63,6 +63,12 @@ app.use(blockPrototypePollution);
 app.use(requestLogger);
 app.use(rateGuard);
 app.use(attachUser);
+// 会话 ID 校验：必须在 attachUser 之后（需要 req.user / req.session 才能比对）
+// 低风险只读接口豁免，其余请求需携带与会话绑定的 sessionId
+app.use((req, res, next) => {
+  if (isLowRiskRequest(req)) return next();
+  return assertSessionId(req, res, next);
+});
 
 /* ---------------- API ---------------- */
 /* 客户端加密所需的 RSA 公钥 */

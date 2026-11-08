@@ -182,11 +182,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   // FormData / 二进制：不能 JSON 加密，走原生 fetch（仍由 TLS 保护）
   if (isForm) {
+    // 文件上传无法做 JSON 信封加密，但会话 ID 仍通过头部参与鉴权
+    const { getSessionId } = await import('./crypto');
+    const sid = getSessionId();
     const res = await fetch(`/api${path}`, {
       credentials: 'include',
       cache: 'no-store',
       ...init,
       method,
+      headers: {
+        ...((init?.headers as Record<string, string>) || {}),
+        ...(sid ? { 'X-QM-Sid': sid } : {}),
+      },
     });
     const text = await res.text();
     let data: any = null;
@@ -239,10 +246,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   // 会话过期：触发全局提示（不抛异常，由调用方按 status 处理）
-  if (status === 401 && data?.code === 'SESSION_EXPIRED') {
+  if (status === 401 && ['SESSION_EXPIRED', 'SESSION_ID_REQUIRED', 'SESSION_ID_MISMATCH'].includes(data?.code || '')) {
+    const { setSessionId } = await import('./crypto');
+    setSessionId(null);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('qm:session-expired', { detail: data }));
     }
+  }
+
+  // 会话 ID 生命周期：登录/注册成功即保存，登出即清除
+  if (data?.sessionId) {
+    const { setSessionId } = await import('./crypto');
+    setSessionId(String(data.sessionId));
+  }
+  if (path === '/auth/logout') {
+    const { setSessionId } = await import('./crypto');
+    setSessionId(null);
   }
 
   if (!ok) {
