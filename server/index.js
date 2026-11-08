@@ -17,7 +17,7 @@ import { requestLogger } from './lib/logger.js';
 import { isMailConfigured } from './lib/mailer.js';
 import { rateGuard, securitySnapshot } from './lib/guard.js';
 import { securityHeaders, blockPrototypePollution, csrfGuard, requestId, mitmGuard } from './lib/security.js';
-import { decryptRequest } from './lib/crypto-middleware.js';
+import { decryptRequest, encryptResponseMiddleware } from './lib/crypto-middleware.js';
 import { getPublicKey, ensureKeyPair } from './lib/crypto-layer.js';
 
 import authRoutes from './routes/auth.js';
@@ -54,6 +54,9 @@ app.use(csrfGuard);
 app.use(mitmGuard);
 // 应用层加密：还原客户端加密的请求体（明文请求自动放行）
 app.use(decryptRequest);
+// 响应加密：客户端带 X-QM-Key 时，所有 JSON 响应统一加密
+// 必须放在 decryptRequest 之后、路由之前
+app.use(encryptResponseMiddleware);
 // 放在解密之后，确保加密请求解密出的请求体同样经过原型污染清洗
 app.use(blockPrototypePollution);
 // 日志先于风控挂载，保证被限流的请求同样被记录，便于事后排查误伤

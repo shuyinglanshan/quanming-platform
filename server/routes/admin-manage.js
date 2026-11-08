@@ -769,4 +769,93 @@ router.get('/ip/:ip/profile', requirePermission('logs'), async (req, res) => {
   });
 });
 
+
+/* ================= 会话管理（基于 sessionId） ================= */
+
+/** 列出所有活跃会话 */
+router.get('/sessions', requirePermission('users'), (req, res) => {
+  const now = Date.now();
+  const list = db.sessions
+    .filter((s) => s.expiresAt > now)
+    .map((s) => {
+      const u = findUserById(s.userId);
+      return {
+        sessionId: s.sessionId || '—',
+        userId: s.userId,
+        username: u?.username || '—',
+        nickname: u?.nickname || '—',
+        role: s.role || u?.role || 'user',
+        ip: s.ip || '',
+        ua: s.ua || '',
+        createdAt: s.createdAt,
+        lastActiveAt: s.lastActiveAt || s.createdAt,
+        expiresAt: s.expiresAt,
+        // 是否为本请求所在会话
+        current: s.sessionId === req.sessionId,
+      };
+    })
+    .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+
+  res.json({
+    items: list,
+    counts: {
+      total: list.length,
+      admin: list.filter((s) => s.role === 'admin').length,
+      superadmin: list.filter((s) => s.role === 'superadmin').length,
+      assessor: list.filter((s) => s.role === 'assessor').length,
+      user: list.filter((s) => s.role === 'user').length,
+    },
+  });
+});
+
+/** 踢出指定会话（按 sessionId） */
+router.post('/sessions/:sessionId/kick', requirePermission('users'), (req, res) => {
+  const target = db.sessions.find((s) => s.sessionId === req.params.sessionId);
+  if (!target) return res.status(404).json({ error: '会话不存在或已失效' });
+
+  // 防越权：非 admin 不能踢出同级或更高权限的会话
+  if (req.user.role !== 'admin') {
+    const targetUser = findUserById(target.userId);
+    const rank = { user: 0, assessor: 1, superadmin: 2, admin: 3 };
+    if ((rank[targetUser?.role] ?? 9) >= (rank[req.user.role] ?? 0)) {
+      return res.status(403).json({ error: '无权限踢出同级或更高权限的会话' });
+    }
+  }
+
+  target.expiredReason = 'kicked';
+  db.sessions = db.sessions.filter((s) => s.sessionId !== req.params.sessionId);
+  save('sessions');
+
+  eventLog(req, '踢出会话', `${req.params.sessionId} · ${findUserById(target.userId)?.username || '-'}`);
+  res.json({ ok: true });
+});
+
+/** 踢出某用户的全部会话 */
+router.post('/sessions/user/:userId/kick', requirePermission('users'), (req, res) => {
+  const u = findUserById(req.params.userId);
+  if (!u) return res.status(404).json({ error: '用户不存在' });
+
+  if (req.user.role !== 'admin') {
+    const rank = { user: 0, assessor: 1, superadmin: 2, admin: 3 };
+    if ((rank[u.role] ?? 9) >= (rank[req.user.role] ?? 0)) {
+      return res.status(403).json({ error: '无权限踢出同级或更高权限账号的会话' });
+    }
+  }
+
+  const before = db.sessions.length;
+  db.sessions = db.sessions.filter((s) => s.userId !== u.id);
+  const removed = before - db.sessions.length;
+  save('sessions');
+
+  notifyUser(u.id, {
+    category: 'system',
+    level: 'warning',
+    title: '你的登录状态已被管理员下线',
+    content: '你的所有登录会话已被管理员终止，请重新登录。',
+    link: '/login',
+  });
+  eventLog(req, '踢出用户全部会话', `${u.username} · ${removed} 个`);
+  res.json({ ok: true, removed });
+});
+
 export default router;

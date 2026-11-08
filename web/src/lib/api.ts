@@ -165,54 +165,88 @@ function needsEncryption(path: string, method: string): boolean {
   return ENCRYPT_PREFIXES.some((p) => path.startsWith(p));
 }
 
+/**
+ * 统一请求入口：全站双向加密
+ *
+ * 所有 API（含 GET 只读接口）都：
+ *   1. 携带一次性会话密钥头 X-QM-Key
+ *   2. 请求体 AES-256-GCM 加密
+ *   3. 响应体由服务端用同一把密钥加密，这里解密
+ *
+ * 因此抓包无法看到任何业务内容（用户列表、圈名、日志等全部为密文）。
+ * 文件上传（FormData）与二进制下载走明文通道，由 HTTPS 保护。
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   const isForm = init?.body instanceof FormData;
-  const headers: Record<string, string> = {
-    ...(isForm ? {} : { 'Content-Type': 'application/json' }),
-    ...((init?.headers as Record<string, string>) || {}),
-  };
 
-  let body = init?.body as BodyInit | undefined;
-
-  // 敏感字段：transparent 加密（失败则降级为明文，由服务端兼容）
-  if (!isForm && body && typeof body === 'string' && needsEncryption(path, method)) {
+  // FormData / 二进制：不能 JSON 加密，走原生 fetch（仍由 TLS 保护）
+  if (isForm) {
+    const res = await fetch(`/api${path}`, {
+      credentials: 'include',
+      cache: 'no-store',
+      ...init,
+      method,
+    });
+    const text = await res.text();
+    let data: any = null;
     try {
-      const { encryptBody } = await import('./crypto');
-      const plain = JSON.parse(body);
-      const envelope = await encryptBody(plain, `/api${path}`, method);
-      body = JSON.stringify(envelope);
-      headers['X-Encrypted'] = '1';
-    } catch (err) {
-      console.warn('[api] 请求加密失败，降级为明文传输', err);
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    if (!res.ok) {
+      throw new ApiError(data?.error || `请求失败（${res.status}）`, res.status, data?.code, data);
+    }
+    return data as T;
+  }
+
+  // 解析请求体
+  let payload: unknown;
+  if (init?.body && typeof init.body === 'string') {
+    try {
+      payload = JSON.parse(init.body);
+    } catch {
+      payload = undefined;
     }
   }
 
-  const res = await fetch(`/api${path}`, {
-    credentials: 'include',
-    cache: 'no-store',
-    ...init,
-    method,
-    headers,
-    body,
-  });
-
-  const text = await res.text();
-  let data: any = null;
+  let result;
   try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
+    const { secureFetch } = await import('./crypto');
+    result = await secureFetch(`/api${path}`, {
+      method,
+      body: payload,
+      headers: (init?.headers as Record<string, string>) || {},
+    });
+  } catch (err) {
+    // 加密链路本身失败：清公钥缓存并提示刷新
+    const { resetKeyCache } = await import('./crypto');
+    resetKeyCache();
+    throw new ApiError(
+      err instanceof Error ? err.message : '安全通道建立失败，请刷新页面',
+      0,
+      'SECURE_CHANNEL_FAILED',
+    );
   }
 
-  // 公钥轮换：解密失败时清缓存，下次自动重新拉取
-  if (!res.ok && data?.code === 'DECRYPT_FAILED') {
+  const { ok, status, data } = result;
+
+  // 公钥轮换：解密失败时清缓存
+  if (!ok && data?.code === 'DECRYPT_FAILED') {
     const { resetKeyCache } = await import('./crypto');
     resetKeyCache();
   }
 
-  if (!res.ok) {
-    throw new ApiError(data?.error || `请求失败（${res.status}）`, res.status, data?.code, data);
+  // 会话过期：触发全局提示（不抛异常，由调用方按 status 处理）
+  if (status === 401 && data?.code === 'SESSION_EXPIRED') {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('qm:session-expired', { detail: data }));
+    }
+  }
+
+  if (!ok) {
+    throw new ApiError(data?.error || `请求失败（${status}）`, status, data?.code, data);
   }
   return data as T;
 }

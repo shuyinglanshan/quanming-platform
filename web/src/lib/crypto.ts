@@ -135,3 +135,144 @@ export async function encryptBody(
 export function isCryptoSupported(): boolean {
   return typeof crypto !== 'undefined' && Boolean(crypto.subtle) && typeof crypto.subtle.encrypt === 'function';
 }
+
+/* ============================================================
+ * 全站双向加密
+ *
+ * 每个请求：
+ *   1. 生成一次性 32 字节 AES 密钥
+ *   2. 用 RSA-OAEP 加密该密钥 → 放进 X-QM-Key 头
+ *   3. 请求体（若有）用同一把密钥 AES-GCM 加密
+ *   4. 服务端用同一把密钥加密响应，前端用同一把密钥解密
+ *
+ * 这样整条链路（请求 + 响应）都是密文，抓包看不到任何业务内容。
+ * 会话密钥每次请求都不同，天然具备前向安全性。
+ * ============================================================ */
+
+/** 生成一次性会话密钥对（AES 密钥 + RSA 加密后的头值） */
+async function newSessionKey(): Promise<{ aesKey: CryptoKey; header: string }> {
+  const pub = await getPublicKey();
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const headerBuf = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, pub, raw);
+  const aesKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ]);
+  return { aesKey, header: b64(headerBuf) };
+}
+
+/** 用会话密钥加密请求体 */
+async function encryptWithSession(
+  aesKey: CryptoKey,
+  payload: unknown,
+  path: string,
+  method: string,
+): Promise<{ iv: string; data: string; tag: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  // 与后端 buildAAD 完全一致：qm:v2|METHOD|path
+  const aadStr = `qm:v2|${method.toUpperCase()}|${path}`;
+  const aad = new TextEncoder().encode(aadStr);
+  const plain = new TextEncoder().encode(
+    JSON.stringify({
+      ...(payload as object),
+      _qm_ts: Date.now(),
+      // nonce 必须匹配后端规则 [A-Za-z0-9_-]{16,64}，故用 base64url 且去掉填充
+      _qm_nonce: b64(crypto.getRandomValues(new Uint8Array(16)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+      // 必须携带 path/method，后端据此做双重绑定校验（防跨接口重放）
+      _qm_path: path,
+      _qm_method: method.toUpperCase(),
+    }),
+  );
+  const buf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 },
+    aesKey,
+    plain,
+  );
+  const full = new Uint8Array(buf);
+  const tagLen = 16;
+  return {
+    iv: b64(iv),
+    data: b64(full.slice(0, full.length - tagLen)),
+    tag: b64(full.slice(full.length - tagLen)),
+  };
+}
+
+/** 解密响应体 */
+export async function decryptResponse(
+  aesKey: CryptoKey,
+  enc: { iv: string; data: string; tag: string },
+): Promise<any> {
+  const iv = Uint8Array.from(atob(enc.iv), (c) => c.charCodeAt(0));
+  const tag = Uint8Array.from(atob(enc.tag), (c) => c.charCodeAt(0));
+  const data = Uint8Array.from(atob(enc.data), (c) => c.charCodeAt(0));
+  const combined = new Uint8Array(data.length + tag.length);
+  combined.set(data, 0);
+  combined.set(tag, data.length);
+  const plain = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv, additionalData: new TextEncoder().encode('response'), tagLength: 128 },
+    aesKey,
+    combined,
+  );
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+/**
+ * 发起一次全加密请求
+ * @returns 解密后的响应数据
+ */
+export async function secureFetch(
+  url: string,
+  init: { method: string; body?: unknown; headers?: Record<string, string> },
+): Promise<{ ok: boolean; status: number; data: any }> {
+  const { aesKey, header } = await newSessionKey();
+  const headers: Record<string, string> = {
+    'X-QM-Key': header,
+    ...(init.headers || {}),
+  };
+
+  let body: string | undefined;
+  if (init.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    // path 用真实 API 路径（不含 /api 前缀的差异由调用方保证）
+    // AAD 必须与后端 req.path 完全一致（含 /api 前缀），否则认证标签校验失败
+    const path = url.startsWith('/api') ? url : `/api${url}`;
+    const enc = await encryptWithSession(aesKey, init.body, path, init.method);
+    // 信封必须包含 key（RSA 加密的 AES 会话密钥），否则后端判定格式不合法
+    body = JSON.stringify({ enc: { v: 2, kid: currentKid(), key: header, ...enc } });
+    headers['X-Encrypted'] = '1';
+  }
+
+  const res = await fetch(url, {
+    method: init.method,
+    headers,
+    body,
+    credentials: 'include',
+    cache: 'no-store',
+  });
+
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+
+  // 响应密文则解密
+  if (data && data.enc && res.headers.get('x-qm-encrypted') === '1') {
+    try {
+      data = await decryptResponse(aesKey, data.enc);
+    } catch (err) {
+      console.warn('[crypto] 响应解密失败', err);
+      throw new Error('响应解密失败，请刷新页面重试');
+    }
+  }
+
+  return { ok: res.ok, status: res.status, data };
+}
+
+/** 当前公钥标识（用于信封 kid 校验） */
+function currentKid(): string {
+  return cachedKey?.kid || '';
+}

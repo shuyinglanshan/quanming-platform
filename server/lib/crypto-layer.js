@@ -34,6 +34,8 @@ export const CRYPTO_PROTOCOL_VERSION = 2;
 const MIN_RSA_BITS = 3072;
 
 let cached = { privateKey: null, publicKey: null, kid: null, bits: 0 };
+/** 最近一次 decryptPayload 使用的 AES 密钥（供响应加密复用） */
+let lastAesKey = null;
 
 function ensureKeyDir() {
   if (!fs.existsSync(KEY_DIR)) fs.mkdirSync(KEY_DIR, { recursive: true, mode: 0o700 });
@@ -234,10 +236,11 @@ export function decryptPayload(payload, context = {}) {
       },
       keyBuf,
     );
-  } catch {
+  } catch (e) {
     throw new Error('会话密钥解密失败，请刷新页面后重试');
   }
   if (aesKey.length !== 32) throw new Error('会话密钥长度不正确');
+  lastAesKey = aesKey;
 
   // 2) AES-256-GCM 解密；AAD 绑定请求方法/地址，认证标签不匹配会抛错
   let plaintext;
@@ -246,7 +249,7 @@ export function decryptPayload(payload, context = {}) {
     decipher.setAAD(buildAAD(context.method, context.path));
     decipher.setAuthTag(tagBuf);
     plaintext = Buffer.concat([decipher.update(Buffer.from(String(data), 'base64')), decipher.final()]);
-  } catch {
+  } catch (e) {
     throw new Error('请求内容校验失败（可能被篡改），请重试');
   }
 
@@ -260,6 +263,11 @@ export function decryptPayload(payload, context = {}) {
   } catch (err) {
     throw new Error(err.message || '请求内容解析失败');
   }
+}
+
+/** 取出最近一次解密使用的 AES 密钥，供同一请求的响应加密复用 */
+export function decryptLastAesKey() {
+  return lastAesKey;
 }
 
 /** 判断请求体是否为加密信封（字段是否齐全由 decryptPayload 严格校验） */
@@ -276,4 +284,63 @@ export function isEncryptedEnvelope(body) {
       body.enc.data &&
       body.enc.tag,
   );
+}
+
+/* ============================================================
+ * 响应加密（服务端 -> 浏览器）
+ *
+ * 采用与请求对称的机制，但用**独立的临时 AES 会话密钥**：
+ *   - 浏览器每次请求在头部携带 X-Session-Key（RSA 加密的 AES 密钥）
+ *   - 服务端用它加密响应体，浏览器用同一把密钥解密
+ *
+ * 这样避免服务端为每个响应生成 RSA 密钥对（性能不可接受），
+ * 同时保持前向安全：会话密钥每次请求都不同。
+ * ============================================================ */
+
+/**
+ * 用客户端提供的 AES 密钥加密响应数据
+ * @param {Buffer} aesKey 32 字节
+ * @param {any} plain 明文对象
+ * @returns {{ v:number, iv:string, data:string, tag:string }}
+ */
+export function encryptResponse(aesKey, plain) {
+  if (!Buffer.isBuffer(aesKey) || aesKey.length !== 32) {
+    throw new Error("响应加密密钥不正确");
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", aesKey, iv);
+  // AAD 固定为 "response"，防止把响应密文挪作请求密文使用
+  cipher.setAAD(Buffer.from("response", "utf8"));
+  const body = Buffer.from(JSON.stringify(plain), "utf8");
+  const data = Buffer.concat([cipher.update(body), cipher.final()]);
+  return {
+    v: CRYPTO_PROTOCOL_VERSION,
+    iv: iv.toString("base64"),
+    data: data.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+  };
+}
+
+/**
+ * 从请求头解析客户端会话密钥（RSA 加密的 AES 密钥）
+ * @returns {Buffer|null} 32 字节 AES 密钥
+ */
+export function parseSessionKey(encryptedKeyB64) {
+  if (!encryptedKeyB64) return null;
+  try {
+    if (!cached.privateKey || !fs.existsSync(PRIVATE_KEY_FILE)) ensureKeyPair();
+    const keyBuf = Buffer.from(String(encryptedKeyB64), "base64");
+    if (keyBuf.length !== Math.ceil((cached.bits || 3072) / 8)) return null;
+    const aesKey = crypto.privateDecrypt(
+      {
+        key: cached.privateKey,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+        oaepHash: "sha256",
+      },
+      keyBuf,
+    );
+    return aesKey.length === 32 ? aesKey : null;
+  } catch {
+    return null;
+  }
 }

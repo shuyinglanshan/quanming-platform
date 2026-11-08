@@ -80,6 +80,24 @@ export function getDb() {
     db.exec('ALTER TABLE names ADD COLUMN image_sha256 TEXT');
   }
 
+  // 会话：唯一会话 ID（对外管理用）、权限快照、过期原因
+  const sessC2 = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+  if (sessC2.length && !sessC2.includes('session_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN session_id TEXT');
+  }
+  if (sessC2.length && !sessC2.includes('role')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN role TEXT');
+  }
+  if (sessC2.length && !sessC2.includes('expired_reason')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN expired_reason TEXT');
+  }
+  if (sessC2.length && !sessC2.includes('ip')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN ip TEXT');
+  }
+  if (sessC2.length && !sessC2.includes('ua')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN ua TEXT');
+  }
+
   // 会话：最后活跃时间（用于闲置自动踢出）
   const sessCols = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
   if (sessCols.length && !sessCols.includes('last_active_at')) {

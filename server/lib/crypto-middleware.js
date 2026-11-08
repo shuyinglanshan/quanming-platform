@@ -1,4 +1,4 @@
-import { isEncryptedEnvelope, decryptPayload } from './crypto-layer.js';
+import { isEncryptedEnvelope, decryptPayload, decryptLastAesKey, encryptResponse, parseSessionKey } from './crypto-layer.js';
 import { trustedClientIp } from './ip.js';
 import { eventLog } from './logger.js';
 
@@ -109,6 +109,9 @@ export function decryptRequest(req, res, next) {
     }
     req.body = plain;
     req.encrypted = true;
+    // 保存本次请求的 AES 会话密钥，响应加密复用它
+    // （避免客户端需要额外维护两套密钥，也更省一次 RSA 运算）
+    req.qmAesKey = decryptLastAesKey();
     next();
   } catch (err) {
     noteFailure(ip);
@@ -125,4 +128,60 @@ export function cryptoStats() {
     .filter(([, v]) => v.resetAt > now)
     .map(([ip, v]) => ({ ip, count: v.count, resetIn: Math.ceil((v.resetAt - now) / 1000) }));
   return { activeWindows: list.length, top: list.sort((a, b) => b.count - a.count).slice(0, 10) };
+}
+
+/* ============================================================
+ * 响应加密中间件
+ *
+ * 客户端在请求头里带上 X-QM-Key（RSA 加密的 AES 会话密钥）。
+ * 若存在，则把 res.json 的响应体整体加密为密文：
+ *   { enc: { v, iv, data, tag }, encrypted: true }
+ *
+ * 目的：让抓包者即使截获流量，也看不到任何接口内容
+ *      （包括用户列表、日志、圈名数据等）。
+ *
+ * 兼容：未携带 X-QM-Key 的请求走明文（用于 /api/health 等探活，
+ *      以及渐进式上线；可通过 REQUIRE_ENCRYPTED=1 强制）。
+ * ============================================================ */
+export function encryptResponseMiddleware(req, res, next) {
+  // 优先复用请求信封里的 AES 密钥（同一把密钥加解密更省事，且天然一一对应）
+  // 其次才读 X-QM-Key 头（兼容仅 GET 的只读请求）
+  let aesKey = req.qmAesKey || null;
+  if (!aesKey) {
+    const keyHeader = req.get('x-qm-key');
+    if (keyHeader) {
+      aesKey = parseSessionKey(keyHeader);
+      // 带了密钥头却解不出来 → 明确拒绝，
+      // 不能静默降级为明文响应（否则等于加密可被绕过）
+      if (!aesKey) {
+        return res.status(400).json({
+          error: '响应加密密钥无效，请刷新页面后重试',
+          code: 'RESPONSE_KEY_INVALID',
+        });
+      }
+    }
+  }
+  if (!aesKey) return next();
+
+  if (!Buffer.isBuffer(aesKey) || aesKey.length !== 32) {
+    return res.status(400).json({
+      error: '响应加密密钥无效，请刷新页面后重试',
+      code: 'RESPONSE_KEY_INVALID',
+    });
+  }
+
+  const originalJson = res.json.bind(res);
+  res.json = (payload) => {
+    try {
+      res.setHeader('x-qm-encrypted', '1');
+      res.setHeader('Cache-Control', 'no-store');
+      return originalJson({ enc: encryptResponse(aesKey, payload) });
+    } catch (err) {
+      console.error('[crypto] 响应加密失败:', err.message);
+      res.status(500);
+      return originalJson({ error: '响应加密失败', code: 'RESPONSE_ENCRYPT_FAILED' });
+    }
+  };
+
+  next();
 }

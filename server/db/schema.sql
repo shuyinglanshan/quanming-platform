@@ -414,3 +414,10 @@ CREATE INDEX IF NOT EXISTS idx_name_bans_name ON name_bans(name_id);
 
 -- 图片审核扩展：支持圈名图片（target_type: user=用户头像, name=圈名图片）
 -- 旧库通过 sqlite.js 迁移补齐
+
+-- ============================================================
+-- 会话 ID（Session ID）：对外展示与管理的唯一标识
+-- 与 token（cookie 中的凭证）分离：
+--   token    = 长期凭证，存 cookie，不对外暴露
+--   session_id = 短期标识，用于后台管理、踢出、审计
+-- ============================================================

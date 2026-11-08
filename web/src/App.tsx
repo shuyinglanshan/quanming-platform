@@ -1,3 +1,4 @@
+import { SessionExpiredGuard } from '@/components/session-expired-guard';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import SiteLayout from './components/layout/site-layout';
@@ -26,6 +27,7 @@ export default function App() {
   return (
     <>
       <ScrollToTop />
+      <SessionExpiredGuard />
       <Routes>
         <Route element={<SiteLayout />}>
           <Route path="/" element={<HomePage />} />

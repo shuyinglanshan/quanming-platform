@@ -39,6 +39,7 @@ import {
 } from '../lib/util.js';
 import { sendCodeMail, isMailConfigured } from '../lib/mailer.js';
 import { eventLog } from '../lib/logger.js';
+import { trustedClientIp } from '../lib/ip.js';
 import { checkLock, recordFailure, recordSuccess } from '../lib/login-guard.js';
 import { createChallenge, verifyChallenge, consumeChallenge, peekChallenge } from '../lib/captcha.js';
 import {
@@ -48,6 +49,16 @@ import {
 } from '../lib/register-guard.js';
 
 const router = express.Router();
+
+/** 会话元信息：角色快照 + 来源 IP/UA，用于防越权与审计 */
+function sessionMeta(req, user) {
+  return {
+    role: user.role,
+    ip: trustedClientIp(req) || '',
+    ua: req.get('user-agent') || '',
+  };
+}
+
 
 const CODE_TTL = 10 * 60 * 1000; // 10 分钟
 const RESEND_GAP = 60 * 1000; // 60 秒
@@ -417,10 +428,10 @@ router.post('/register', async (req, res) => {
   recordRegisterAttempt(req, 'success', { success: true });
   resetRegisterAttempts(req);
 
-  const token = createSession(user.id);
+  const { token, sessionId } = createSession(user.id, sessionMeta(req, user));
   setSessionCookie(res, token);
   eventLog(req, '注册账号', method === 'phone' ? `${user.username} · ${user.phone}` : `${user.username} · ${user.email}`);
-  res.status(201).json({ user: publicUser(user) });
+  res.status(201).json({ user: publicUser(user), sessionId });
 });
 
 /* ---------------- 密码登录（邮箱 / 手机号 / 用户名） ---------------- */
@@ -483,10 +494,10 @@ router.post('/login', (req, res) => {
     save();
   }
   touchLogin(user, req);
-  const token = createSession(user.id);
+  const { token, sessionId } = createSession(user.id, sessionMeta(req, user));
   setSessionCookie(res, token);
   eventLog(req, '登录成功', user.email || user.phone || user.username);
-  res.json({ user: publicUser(user) });
+  res.json({ user: publicUser(user), sessionId });
 });
 
 /* ---------------- 验证码登录（邮箱） ---------------- */
@@ -504,10 +515,10 @@ router.post('/login-code', (req, res) => {
   if (!checked.ok) return res.status(400).json({ error: checked.error });
 
   touchLogin(user, req);
-  const token = createSession(user.id);
+  const { token, sessionId } = createSession(user.id, sessionMeta(req, user));
   setSessionCookie(res, token);
   eventLog(req, '验证码登录成功', user.email);
-  res.json({ user: publicUser(user) });
+  res.json({ user: publicUser(user), sessionId });
 });
 
 /* ---------------- 会话 ---------------- */
