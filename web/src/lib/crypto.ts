@@ -329,7 +329,7 @@ const SID_PERSIST_KEY = 'qm_sid_p';
  */
 let sidReady = false;
 let sidReadyResolve: (() => void) | null = null;
-const sidReadyPromise = new Promise<void>((resolve) => {
+let sidReadyPromise = new Promise<void>((resolve) => {
   sidReadyResolve = resolve;
 });
 
@@ -339,10 +339,33 @@ export function markSidReady() {
   sidReadyResolve?.();
 }
 
+/**
+ * 重置闸门（SID 被清除时调用）
+ *
+ * 问题：sidReady 是模块级变量，首次 /auth/me 完成后置为 true 就不再变化。
+ *   用户登出后 setSessionId(null)，闸门仍开着，
+ *   此时任何请求都会「立即通过闸门」并带着空 SID 发出，
+ *   服务端返回 401 SESSION_ID_REQUIRED，
+ *   前端误判为「会话已过期」并弹提示 —— 这就是
+ *   「未登录时切后台再回来自动提示会话过期」的根因。
+ *
+ * 修复：清除 SID 时同步把闸门关上，下次需要重新等待 /auth/me 恢复。
+ */
+function resetSidReady() {
+  if (!sidReady && sidReadyResolve) return;
+  sidReady = false;
+  sidReadyPromise = new Promise<void>((resolve) => {
+    sidReadyResolve = resolve;
+  });
+}
+
 /** 等待 SID 就绪（最多 timeout 毫秒，避免永久阻塞） */
 export async function waitSidReady(timeout = 1500): Promise<void> {
-  if (sidReady || getSessionId()) return;
-  await Promise.race([sidReadyPromise, new Promise((r) => setTimeout(r, timeout))]);
+  if (getSessionId()) return;
+  // 没有 SID 且闸门未开：说明正在等待会话恢复，短暂等待
+  if (!sidReady) {
+    await Promise.race([sidReadyPromise, new Promise((r) => setTimeout(r, timeout))]);
+  }
 }
 
 export function setSessionId(sid: string | null) {
@@ -353,6 +376,8 @@ export function setSessionId(sid: string | null) {
     } else {
       sessionStorage.removeItem(SID_KEY);
       localStorage.removeItem(SID_PERSIST_KEY);
+      // 清除 SID 时同步关闭闸门，避免后续请求带着空 SID 触发误报
+      resetSidReady();
     }
   } catch {
     /* 隐私模式下存储可能不可用，忽略 */

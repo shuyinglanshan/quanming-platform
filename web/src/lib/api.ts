@@ -263,17 +263,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const code = data?.code || '';
     const { setSessionId, getSessionId } = await import('./crypto');
 
-    // 会话已失效 / 从未登录：都要清空前端登录态
-    if (code === 'SESSION_EXPIRED' || code === 'SESSION_ID_MISMATCH' || code === 'NOT_AUTHENTICATED') {
+    /**
+     * 会话状态处理（关键区分）
+     *
+     * SESSION_EXPIRED / SESSION_ID_MISMATCH
+     *   → 会话**曾经存在但已失效**（闲置/被踢/角色变更）
+     *   → 需要弹「登录过期，请重新登录」
+     *
+     * NOT_AUTHENTICATED
+     *   → **从未登录**或 cookie 已清除
+     *   → 这是正常状态（游客浏览、刚打开登录页），
+     *      **绝对不能弹「会话过期」**
+     *   （旧实现把它当过期处理，导致「未登录时切后台回来提示会话过期」）
+     *
+     * SESSION_ID_REQUIRED
+     *   → 本地有 SID 但服务端要求 → 会话失效，需登出
+     *   → 本地无 SID（刷新未恢复）→ 静默
+     */
+    if (code === 'SESSION_EXPIRED' || code === 'SESSION_ID_MISMATCH') {
       setSessionId(null);
       if (typeof window !== 'undefined') {
-        // NOT_AUTHENTICATED 说明 cookie 也没了，属于「会话已结束」
         window.dispatchEvent(
-          new CustomEvent('qm:session-expired', {
-            detail: { ...data, reason: data?.reason || (code === 'NOT_AUTHENTICATED' ? 'invalid' : undefined) },
-          }),
+          new CustomEvent('qm:session-expired', { detail: data }),
         );
       }
+    } else if (code === 'NOT_AUTHENTICATED') {
+      // 从未登录：只清本地残留，不提示
+      setSessionId(null);
     } else if (code === 'SESSION_ID_REQUIRED') {
       // 区分两种情况：
       //   a) 本地本来就没有 SID（刷新后尚未恢复）→ 静默，等 /auth/me
