@@ -40,6 +40,7 @@ import {
 import { sendCodeMail, isMailConfigured } from '../lib/mailer.js';
 import { eventLog } from '../lib/logger.js';
 import { trustedClientIp } from '../lib/ip.js';
+import { verifyEmailDeliverable } from '../lib/email-verify.js';
 import { checkLock, recordFailure, recordSuccess } from '../lib/login-guard.js';
 import {
   geetestConfigured,
@@ -123,15 +124,38 @@ router.get('/click-challenge', (_req, res) => {
  *   用户在注册/登录时会得到统一的模糊提示，
  *   真正需要确认时通过邮箱验证码流程完成。
  */
-router.get('/email-check', (req, res) => {
+router.get('/email-check', async (req, res) => {
   const info = parseEmail(req.query.email);
-  // 只返回格式相关字段，剔除任何与注册状态有关的信息
   res.setHeader('Cache-Control', 'no-store');
+
+  // 格式不合法直接返回，不做 DNS 查询
+  if (!info.valid) {
+    return res.json({
+      valid: false,
+      deliverable: false,
+      label: info.label,
+      domain: info.domain || '',
+      provider: info.provider || '',
+      reason: info.label,
+    });
+  }
+
+  /**
+   * 邮箱可投递性检查（MX 记录 + 一次性邮箱黑名单）
+   *
+   * 目的：注册时提前发现「域名写错」「临时邮箱」等问题，
+   *      避免验证码发出后石沉大海，浪费发信配额。
+   *
+   * 注意：**不返回注册状态**（防账号枚举，见之前的修复）。
+   */
+  const deliver = await verifyEmailDeliverable(info.email);
   res.json({
-    valid: info.valid,
-    label: info.label,
+    valid: true,
+    deliverable: deliver.ok,
+    label: deliver.ok ? info.label : deliver.reason,
     domain: info.domain || '',
     provider: info.provider || '',
+    reason: deliver.ok ? '' : deliver.reason,
   });
 });
 
@@ -195,6 +219,21 @@ router.post('/send-code', async (req, res) => {
   }
   email = parsed.email;
   const info = { valid: true, domain: parsed.domain, provider: parsed.provider };
+
+  /**
+   * 邮箱可投递性验证（MX + 一次性域名）
+   *
+   * 在真正发信前拦截「域名不存在 / 无 MX / 临时邮箱」，
+   * 避免白白消耗 SMTP 配额、拉低整体送达率。
+   */
+  const deliverable = await verifyEmailDeliverable(email);
+  if (!deliverable.ok) {
+    eventLog(req, '拒绝无效邮箱', `${email} · ${deliverable.reason}`, 'error');
+    return res.status(400).json({
+      error: deliverable.reason || '该邮箱无法接收邮件，请更换',
+      code: 'EMAIL_UNDELIVERABLE',
+    });
+  }
 
   const existing = findUserByEmail(email);
 
@@ -462,6 +501,15 @@ router.post('/register', async (req, res) => {
         .json(blocked?.body || { error: parsed.label });
     }
     email = parsed.email;
+
+    // 注册时再校验一次可投递性（防止绕过 send-code 直接提交）
+    const regDeliverable = await verifyEmailDeliverable(email);
+    if (!regDeliverable.ok) {
+      const blocked = afterRegisterFailure(req, '邮箱不可投递');
+      return res.status(blocked?.status || 400).json(
+        blocked?.body || { error: regDeliverable.reason, code: 'EMAIL_UNDELIVERABLE' },
+      );
+    }
     emailInfo = { valid: true, domain: parsed.domain, provider: parsed.provider };
 
     if (!/^\d{6}$/.test(String(code || ''))) {

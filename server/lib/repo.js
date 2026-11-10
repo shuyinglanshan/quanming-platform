@@ -122,6 +122,11 @@ export const mapSession = (row) =>
     ? {
         token: row.token,
         userId: row.user_id,
+        // 会话 ID 与角色快照：用于对外管理与防越权，必须持久化
+        sessionId: row.session_id || null,
+        role: row.role || null,
+        ip: row.ip || '',
+        ua: row.ua || '',
         createdAt: row.created_at,
         lastActiveAt: row.last_active_at || row.created_at,
         lastHeartbeatAt: row.last_heartbeat_at || row.last_active_at || row.created_at,
@@ -132,11 +137,30 @@ export const mapSession = (row) =>
 export function saveSession(s) {
   getDb()
     .prepare(
-      `INSERT INTO sessions (token,user_id,created_at,last_active_at,last_heartbeat_at,expires_at) VALUES (?,?,?,?,?,?)
-       ON CONFLICT(token) DO UPDATE SET expires_at=excluded.expires_at,
-         last_active_at=excluded.last_active_at, last_heartbeat_at=excluded.last_heartbeat_at`,
+      `INSERT INTO sessions
+         (token,user_id,session_id,role,ip,ua,created_at,last_active_at,last_heartbeat_at,expires_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(token) DO UPDATE SET
+         session_id=excluded.session_id,
+         role=excluded.role,
+         ip=excluded.ip,
+         ua=excluded.ua,
+         expires_at=excluded.expires_at,
+         last_active_at=excluded.last_active_at,
+         last_heartbeat_at=excluded.last_heartbeat_at`,
     )
-    .run(s.token, s.userId, s.createdAt, s.lastActiveAt || s.createdAt || null, s.lastHeartbeatAt || s.createdAt || null, s.expiresAt);
+    .run(
+      s.token,
+      s.userId,
+      s.sessionId || null,
+      s.role || null,
+      s.ip || '',
+      s.ua || '',
+      s.createdAt,
+      s.lastActiveAt || s.createdAt || null,
+      s.lastHeartbeatAt || s.createdAt || null,
+      s.expiresAt,
+    );
 }
 export const deleteSession = (token) => getDb().prepare('DELETE FROM sessions WHERE token=?').run(token);
 export const deleteSessionsByUser = (uid) => getDb().prepare('DELETE FROM sessions WHERE user_id=?').run(uid);
@@ -151,10 +175,23 @@ export function replaceSessions(list = []) {
   const conn = getDb();
   conn.prepare('DELETE FROM sessions').run();
   const stmt = conn.prepare(
-    'INSERT INTO sessions (token,user_id,created_at,last_active_at,last_heartbeat_at,expires_at) VALUES (?,?,?,?,?,?)',
+    `INSERT INTO sessions
+       (token,user_id,session_id,role,ip,ua,created_at,last_active_at,last_heartbeat_at,expires_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
   );
   for (const s of list) {
-    stmt.run(s.token, s.userId, s.createdAt, s.lastActiveAt || s.createdAt || null, s.lastHeartbeatAt || s.createdAt || null, s.expiresAt);
+    stmt.run(
+      s.token,
+      s.userId,
+      s.sessionId || null,
+      s.role || null,
+      s.ip || '',
+      s.ua || '',
+      s.createdAt,
+      s.lastActiveAt || s.createdAt || null,
+      s.lastHeartbeatAt || s.createdAt || null,
+      s.expiresAt,
+    );
   }
 }
 

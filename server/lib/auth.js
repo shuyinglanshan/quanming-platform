@@ -71,6 +71,37 @@ export function createSession(userId, meta = {}) {
   }
 
   db.sessions = db.sessions.filter((s) => s.expiresAt > now);
+
+  /**
+   * 会话数量收敛（防堆积）
+   *
+   * 问题：压测/漏洞扫描时同一账号反复登录，每次都会创建新会话，
+   * 实测出现过单账号 33 个会话、全站 82 个的情况。
+   * 这会拖慢会话查找、膨胀数据库，也让「在线会话」页面失去意义。
+   *
+   * 策略：同一账号最多保留 MAX_SESSIONS_PER_USER 个会话，
+   * 超出时按「最后活跃时间」淘汰最旧的（保留最近使用的设备）。
+   *
+   * 注意：不直接踢掉全部旧会话，避免多设备用户被意外登出。
+   */
+  const MAX_SESSIONS_PER_USER = Math.max(
+    1,
+    Number(process.env.MAX_SESSIONS_PER_USER) || 5,
+  );
+  const mine = db.sessions
+    .filter((s) => s.userId === userId)
+    .sort((a, b) => (b.lastActiveAt || b.createdAt) - (a.lastActiveAt || a.createdAt));
+
+  if (mine.length >= MAX_SESSIONS_PER_USER) {
+    // 保留最近 MAX-1 个，留出位置给即将创建的新会话
+    const drop = mine.slice(MAX_SESSIONS_PER_USER - 1);
+    const dropTokens = new Set(drop.map((s) => s.token));
+    db.sessions = db.sessions.filter((s) => !dropTokens.has(s.token));
+    if (dropTokens.size) {
+      console.log(`[session] 账号 ${userId} 会话超限，淘汰 ${dropTokens.size} 个最旧会话`);
+    }
+  }
+
   db.sessions.push({
     token,
     sessionId,

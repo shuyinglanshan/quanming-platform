@@ -52,7 +52,8 @@ export function EmailField({
     !email.includes('..') &&
     !/^[-.]|[-.]@|@-|@\./.test(email);
 
-  const { registered, checking } = useEmailRegistered(email, Boolean(statusMode) && valid);
+  // 只校验「能否收信」，不查注册状态（防账号枚举）
+  const { deliverable, reason, checking } = useEmailRegistered(email, valid);
 
   useEffect(() => {
     onValidChange?.({ valid, email, domain: domainPart });
@@ -132,45 +133,31 @@ export function EmailField({
         )}
       </div>
 
-      {statusMode && valid && (
+      {valid && (
         <p
           className={cn(
             'flex items-center gap-1.5 text-[11.5px]',
             checking
               ? 'text-slate-500'
-              : statusMode === 'register'
-                ? registered
-                  ? 'text-amber-300'
-                  : 'text-emerald-300'
-                : registered
-                  ? 'text-emerald-300'
-                  : 'text-amber-300',
+              : deliverable === false
+                ? 'text-rose-300'
+                : 'text-emerald-300',
           )}
         >
           {checking ? (
             <>
-              <Loader2 className="size-3 animate-spin" /> 正在查询邮箱状态…
+              <Loader2 className="size-3 animate-spin" /> 正在检查邮箱可用性…
             </>
-          ) : registered === null ? (
-            <span className="text-slate-500">输入完整邮箱后可自动识别注册状态</span>
-          ) : statusMode === 'register' ? (
-            registered ? (
-              <>
-                <CircleAlert className="size-3" /> 该邮箱已注册，请直接登录
-              </>
-            ) : (
-              <>
-                <CircleCheck className="size-3" /> 该邮箱可以注册
-              </>
-            )
-          ) : registered ? (
+          ) : deliverable === false ? (
             <>
-              <CircleCheck className="size-3" /> 邮箱已注册，可以登录
+              <CircleAlert className="size-3" /> {reason || '该邮箱无法接收邮件，请更换'}
+            </>
+          ) : deliverable === true ? (
+            <>
+              <CircleCheck className="size-3" /> 邮箱可用，可接收验证码
             </>
           ) : (
-            <>
-              <CircleAlert className="size-3" /> 该邮箱尚未注册，请先注册账号
-            </>
+            <span className="text-slate-500">将自动检查邮箱是否可接收邮件</span>
           )}
         </p>
       )}

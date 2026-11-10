@@ -343,6 +343,26 @@ function bootstrap() {
     }
   };
   setInterval(settleExpiredCourts, 60_000).unref();
+  /**
+   * 定期清理过期会话（每 10 分钟）
+   *
+   * 之前只在「创建新会话」时被动清理，
+   * 若长时间无人登录，过期会话会一直留在库里，
+   * 导致「在线会话」页面显示大量失效条目。
+   */
+  const pruneDeadSessions = () => {
+    const now = Date.now();
+    const before = db.sessions.length;
+    db.sessions = db.sessions.filter((s) => s.expiresAt > now);
+    const removed = before - db.sessions.length;
+    if (removed > 0) {
+      save('sessions');
+      console.log(`[session] 定期清理过期会话 ${removed} 个，剩余 ${db.sessions.length} 个`);
+    }
+  };
+  pruneDeadSessions();
+  setInterval(pruneDeadSessions, 10 * 60_000).unref();
+
   settleExpiredCourts();
 
   app.listen(PORT, HOST, () => {
