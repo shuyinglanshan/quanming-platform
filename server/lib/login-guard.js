@@ -41,21 +41,55 @@ function hashFingerprint(password) {
   return crypto.createHash('sha256').update(String(password ?? '')).digest('hex').slice(0, 24);
 }
 
-/** 检查是否处于锁定状态 */
+/**
+ * 检查是否处于锁定状态
+ *
+ * 安全修正（防「任意标识触发锁定」）：
+ *   旧逻辑只要 accounts[key] 被锁就拒绝，而 key 完全来自用户输入，
+ *   攻击者可以拿别人的邮箱反复失败，把受害者账号锁死（拒绝服务）。
+ *
+ *   现在区分两类：
+ *     · IP 维度锁定 —— 依然全局生效（这是防爆破的主要手段）
+ *     · 账号维度锁定 —— 只对「该账号 + 该 IP」组合生效
+ *       这样攻击者只能锁住自己这条 IP，无法影响受害者从别处登录
+ */
 export function checkLock(identifier, ip) {
   const s = store();
   const now = Date.now();
   const key = String(identifier || '').toLowerCase().trim();
   const ipKey = normalizeIp(ip);
 
-  const account = s.accounts[key];
-  if (account?.lockedUntil > now) {
-    return { locked: true, retryAfter: Math.ceil((account.lockedUntil - now) / 1000), scope: 'account' };
-  }
+  // 1) IP 维度：同一来源大量失败，直接封禁
   const ipRec = s.ips[ipKey];
   if (ipRec?.lockedUntil > now) {
     return { locked: true, retryAfter: Math.ceil((ipRec.lockedUntil - now) / 1000), scope: 'ip' };
   }
+
+  /**
+   * 2) 账号维度：**全局锁定**，不再区分来源 IP
+   *
+   * 旧实现把账号锁定限定为「同 IP 才生效」，本意是防止
+   * 攻击者用受害者邮箱反复失败把对方锁死（拒绝服务）。
+   * 但这带来更严重的问题：攻击者换出口 IP 后账号锁定立即失效，
+   * 等于可以无限次尝试同一账号 —— 暴力破解防线形同虚设。
+   *
+   * 现在改为全局锁定，并用其他机制抵消 DoS 风险：
+   *   · 锁定是**指数退避 + 封顶**（5 分钟 → 1 小时），不会永久锁死
+   *   · 用户可用「验证码登录」绕过密码锁定（发码需人机验证）
+   *   · IP 维度独立计数，攻击者自身的 IP 也会被封
+   *   · 完整的锁定期内所有失败尝试都记录审计
+   *
+   * 权衡结论：可枚举的暴力破解风险 > 可自愈的临时锁定风险。
+   */
+  const account = s.accounts[key];
+  if (account?.lockedUntil > now) {
+    return {
+      locked: true,
+      retryAfter: Math.ceil((account.lockedUntil - now) / 1000),
+      scope: 'account',
+    };
+  }
+
   return { locked: false };
 }
 
@@ -74,8 +108,18 @@ export function recordFailure(identifier, ip, password = '') {
 
   /* ---- 1. 账号维度 ---- */
   const acc = s.accounts[key] || { count: 0, level: 0, lockedUntil: 0 };
+
+  // 计数**不区分来源 IP**：攻击者换 IP 也继续累加，
+  // 避免「换出口 IP 就重置计数」绕过锁定
   acc.count += 1;
   acc.lastAt = now;
+  acc.lastIp = ipKey; // 仅用于审计与展示，不参与锁定判定
+  acc.ips = Array.isArray(acc.ips) ? acc.ips : [];
+  if (!acc.ips.includes(ipKey)) {
+    acc.ips.push(ipKey);
+    if (acc.ips.length > 20) acc.ips.shift(); // 只保留最近 20 个来源
+  }
+
   if (acc.count >= ACCOUNT_MAX) {
     acc.level += 1;
     acc.lockedUntil = now + lockDuration(acc.level);

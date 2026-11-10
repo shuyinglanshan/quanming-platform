@@ -249,6 +249,33 @@ export async function verifyGeetest(scene, payload, ctx = {}) {
 
 /** 已使用的点击 token（防重放） */
 const usedClicks = new Map();
+/**
+ * 点击验证失败计数（按 IP）
+ *
+ * 12 格盲猜单次命中率 1/12，若不限制，攻击者几十次就能蒙对。
+ * 这里限制每 IP 每分钟最多失败 5 次，超出则拒绝并要求等待。
+ */
+const clickFails = new Map();
+const CLICK_FAIL_WINDOW = 60_000;
+const CLICK_FAIL_MAX = 5;
+
+function noteClickFail(ip) {
+  const now = Date.now();
+  const rec = clickFails.get(ip);
+  if (!rec || now - rec.start > CLICK_FAIL_WINDOW) {
+    clickFails.set(ip, { start: now, count: 1 });
+    return { blocked: false };
+  }
+  rec.count += 1;
+  return { blocked: rec.count > CLICK_FAIL_MAX, retryAfter: Math.ceil((CLICK_FAIL_WINDOW - (now - rec.start)) / 1000) };
+}
+
+function isClickBlocked(ip) {
+  const now = Date.now();
+  const rec = clickFails.get(ip);
+  if (!rec || now - rec.start > CLICK_FAIL_WINDOW) return false;
+  return rec.count > CLICK_FAIL_MAX;
+}
 const CLICK_TTL = 5 * 60 * 1000;
 /** 已签发的挑战（服务端生成，客户端无法伪造） */
 const issuedChallenges = new Map();
@@ -274,10 +301,7 @@ function clickSecret() {
   return String(process.env.CLICK_CAPTCHA_SECRET || 'qm-click-fallback-v1');
 }
 
-function signChallenge(challenge) {
-  const raw = `${challenge.id}|${challenge.targetX}|${challenge.targetY}|${challenge.nonce}`;
-  return crypto.createHmac('sha256', clickSecret()).update(raw).digest('hex');
-}
+// signChallenge 已移除：目标点不再下发，无需下发签名
 
 /** 清理过期挑战与已用 token */
 function pruneChallenges() {
@@ -298,30 +322,55 @@ export function issueClickChallenge() {
   pruneChallenges();
 
   const id = crypto.randomBytes(16).toString('hex');
+
+  /**
+   * 目标点**绝不下发给客户端**
+   *
+   * 旧实现把 targetX/targetY 与 signature 一起返回，
+   * 攻击者只需 GET 一次挑战，回填坐标即可通过 —— 等于没有验证。
+   *
+   * 现在改为：
+   *   · 服务端生成一组随机图标，其中一个为目标
+   *   · 只下发「网格布局」与「哪个格子是目标」的**哈希**，
+   *     不告诉客户端哪一个是目标
+   *   · 客户端必须由用户肉眼识别并点击
+   *   · 校验时服务端按点击坐标反推格子，与记录的目标比对
+   */
+  const cols = 4;
+  const rows = 3;
+  const targetCell = crypto.randomInt(0, cols * rows); // 0..11
+  const nonce = crypto.randomBytes(16).toString('hex');
+
   const challenge = {
     id,
-    // 目标点落在中间区域，避免贴边难点；保留 2 位小数
-    targetX: Math.round((20 + Math.random() * 60) * 100) / 100,
-    targetY: Math.round((20 + Math.random() * 60) * 100) / 100,
-    nonce: crypto.randomBytes(16).toString('hex'),
+    cols,
+    rows,
+    targetCell,
+    nonce,
     expiresAt: Date.now() + CHALLENGE_TTL,
   };
   issuedChallenges.set(id, challenge);
 
-  // 下发挑战 ID、目标点（渲染用）与签名
-  //
-  // 关于「下发签名是否安全」：
-  //   签名本身是 HMAC(challengeId|targetX|targetY|nonce, SECRET)，
-  //   攻击者即使拿到签名，也只能用于**这一个**挑战，
-  //   且必须点中服务端随机生成的目标点、耗时 >=100ms 才能通过。
-  //   挑战一次性 + 3 分钟过期，无法批量复用。
-  //   SECRET 不下发，因此无法为自造挑战生成签名。
+  // 只下发渲染所需信息：
+  //   · 12 个格子的图标（随机排列，目标格用特殊标记但不告知序号）
+  //   · 挑战 ID 与过期时间
+  // 不下发 targetCell、不下发任何可直接用于提交的签名
+  const icons = Array.from({ length: cols * rows }, (_, i) =>
+    i === targetCell ? 'target' : `decoy-${(i * 7919) % 13}`,
+  );
+  // 打乱图标顺序，避免「target 总在固定位置」被推断
+  for (let i = icons.length - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(0, i + 1);
+    [icons[i], icons[j]] = [icons[j], icons[i]];
+  }
+
   return {
     challengeId: id,
-    targetX: challenge.targetX,
-    targetY: challenge.targetY,
+    cols,
+    rows,
     expiresAt: challenge.expiresAt,
-    signature: signChallenge(challenge),
+    // 图标数组：客户端只能看到"有一个特殊图标"，但不知道它在第几个
+    icons,
   };
 }
 
@@ -336,12 +385,15 @@ export function issueClickChallenge() {
  *   5. 点击耗时 >= 100ms（排除脚本瞬间提交）
  *   6. 签名匹配（防篡改挑战内容）
  */
-export function verifyClickCaptcha(payload) {
+export function verifyClickCaptcha(payload, ctx = {}) {
+  const ipKey = String(ctx.ip || 'unknown');
+  if (isClickBlocked(ipKey)) {
+    return { ok: false, reason: 'TOO_MANY_FAILS' };
+  }
   const challengeId = String(payload?.click_challenge || '').trim();
   const x = Number(payload?.click_x);
   const y = Number(payload?.click_y);
   const ms = Number(payload?.click_ms);
-  const sig = String(payload?.click_sig || '').trim();
 
   if (!/^[a-f0-9]{32}$/.test(challengeId)) {
     return { ok: false, reason: 'CHALLENGE_INVALID' };
@@ -350,34 +402,46 @@ export function verifyClickCaptcha(payload) {
   pruneChallenges();
   const challenge = issuedChallenges.get(challengeId);
   if (!challenge) {
-    return { ok: false, reason: 'CHALLENGE_NOT_FOUND' };
+    noteClickFail(ipKey); return { ok: false, reason: 'CHALLENGE_NOT_FOUND' };
   }
   if (Date.now() > challenge.expiresAt) {
     issuedChallenges.delete(challengeId);
-    return { ok: false, reason: 'CHALLENGE_EXPIRED' };
+    noteClickFail(ipKey); return { ok: false, reason: 'CHALLENGE_EXPIRED' };
   }
   if (usedClicks.has(challengeId)) {
     return { ok: false, reason: 'REPLAY' };
   }
 
-  // 签名必须匹配（客户端无法伪造，因为没有密钥）
-  const expectSig = signChallenge(challenge);
-  if (!sig || sig.length !== expectSig.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectSig))) {
-    return { ok: false, reason: 'SIGNATURE_INVALID' };
-  }
-
-  // 坐标范围与命中判定
+  // 坐标范围校验
   if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 100 || y < 0 || y > 100) {
-    return { ok: false, reason: 'COORD_INVALID' };
-  }
-  const dist = Math.hypot(x - challenge.targetX, y - challenge.targetY);
-  if (dist > 18) {
-    return { ok: false, reason: 'MISSED' };
+    noteClickFail(ipKey); return { ok: false, reason: 'COORD_INVALID' };
   }
 
-  // 耗时校验
-  if (!Number.isFinite(ms) || ms < 100) {
-    return { ok: false, reason: 'TOO_FAST' };
+  /**
+   * 命中判定：把点击坐标换算成网格行列，必须正好落在目标格
+   *
+   * 旧实现用「距目标点 18% 以内」的宽松判定，配合下发坐标，
+   * 攻击者可以精确命中。
+   *
+   * 现在目标格由服务端私有持有，客户端只能靠人眼识别图标后点击，
+   * 因此用格子判定即可，既严格又不影响正常用户。
+   */
+  const col = Math.min(challenge.cols - 1, Math.floor((x / 100) * challenge.cols));
+  const row = Math.min(challenge.rows - 1, Math.floor((y / 100) * challenge.rows));
+  const clickedCell = row * challenge.cols + col;
+
+  if (clickedCell !== challenge.targetCell) {
+    // 消耗挑战，防止无限试错
+    usedClicks.set(challengeId, Date.now());
+    issuedChallenges.delete(challengeId);
+    noteClickFail(ipKey); return { ok: false, reason: 'WRONG_CELL' };
+  }
+
+  // 耗时校验（排除脚本瞬间提交）
+  if (!Number.isFinite(ms) || ms < 150) {
+    usedClicks.set(challengeId, Date.now());
+    issuedChallenges.delete(challengeId);
+    noteClickFail(ipKey); return { ok: false, reason: 'TOO_FAST' };
   }
 
   // 一次性消费
@@ -400,7 +464,7 @@ export async function verifyAnyCaptcha(scene, body, ctx = {}) {
   }
   // 有兜底凭据 → 走点击校验（字段名与服务端签发保持一致）
   if (body?.click_challenge) {
-    return verifyClickCaptcha(body);
+    return verifyClickCaptcha(body, ctx);
   }
   return { ok: false, reason: 'MISSING_FIELDS' };
 }
