@@ -180,6 +180,92 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
       </div>
 
       {/* 列表 */}
+      {/* 全选 + 批量操作栏（始终显示，便于发现批量能力） */}
+      {data && data.items.some((i) => i.status === 'pending') && (
+        <div className="glass flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2">
+          <button
+            type="button"
+            onClick={() => {
+              const pendingIds = data.items.filter((i) => i.status === 'pending').map((i) => i.id);
+              const allSelected = pendingIds.length > 0 && pendingIds.every((id) => selected.includes(id));
+              setSelected(allSelected ? [] : pendingIds);
+            }}
+            className="flex items-center gap-2 text-[12px] text-slate-400 transition hover:text-white"
+          >
+            <Checkbox
+              checked={
+                data.items.filter((i) => i.status === 'pending').length > 0 &&
+                data.items.filter((i) => i.status === 'pending').every((i) => selected.includes(i.id))
+              }
+            />
+            全选本页待审（{data.items.filter((i) => i.status === 'pending').length} 条）
+          </button>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+              {selected.length > 0 && (
+                <span className="text-[11.5px] text-violet-200">已选 {selected.length} 条</span>
+              )}
+              <Button
+                size="sm"
+                variant="success"
+                className="h-7"
+                disabled={acting || selected.length === 0}
+                title={selected.length === 0 ? '请先勾选要处理的图片' : '批量通过选中的图片'}
+                onClick={async () => {
+                  setActing(true);
+                  try {
+                    const res = await api.post<{ done: number; skipped: number }>('/admin/avatars/batch', {
+                      ids: selected,
+                      action: 'approve',
+                    });
+                    toast.success('批量通过完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                    setSelected([]);
+                    load();
+                    onChanged?.();
+                  } catch (err) {
+                    toast.error(err instanceof ApiError ? err.message : '操作失败');
+                  } finally {
+                    setActing(false);
+                  }
+                }}
+              >
+                <CheckCheck className="size-3.5" /> 批量通过
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7"
+                disabled={acting || selected.length === 0}
+                title={selected.length === 0 ? '请先勾选要处理的图片' : '批量驳回选中的图片'}
+                onClick={() => {
+                  const why = window.prompt('请输入批量驳回理由（至少 2 个字）');
+                  if (!why || why.trim().length < 2) return;
+                  (async () => {
+                    setActing(true);
+                    try {
+                      const res = await api.post<{ done: number; skipped: number }>('/admin/avatars/batch', {
+                        ids: selected,
+                        action: 'reject',
+                        reason: why.trim(),
+                      });
+                      toast.success('批量驳回完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                      setSelected([]);
+                      load();
+                      onChanged?.();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '操作失败');
+                    } finally {
+                      setActing(false);
+                    }
+                  })();
+                }}
+              >
+                <X className="size-3.5" /> 批量驳回
+              </Button>
+            </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (

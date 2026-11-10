@@ -159,21 +159,44 @@ export function FeedbackPanel({ onChanged }: { onChanged?: () => void }) {
         <Button size="sm" variant="secondary" onClick={load}>刷新</Button>
       </div>
 
-      {/* 批量操作：一键已读 / 批量关闭 */}
-      {selected.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-violet-300/20 bg-violet-400/[0.08] px-3 py-2">
-          <span className="text-[12px] text-violet-100">已选择 {selected.length} 条反馈</span>
-          <div className="ml-auto flex gap-2">
+      {/* 全选 + 批量操作栏（始终显示） */}
+      {data && data.items.some((f) => f.status === 'pending' || f.status === 'read') && (
+        <div className="glass flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2">
+          <button
+            type="button"
+            onClick={() => {
+              const ids = data.items
+                .filter((f) => f.status === 'pending' || f.status === 'read')
+                .map((f) => f.id);
+              const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+              setSelected(all ? [] : ids);
+            }}
+            className="flex items-center gap-2 text-[12px] text-slate-400 transition hover:text-white"
+          >
+            <Checkbox
+              checked={
+                data.items.filter((f) => f.status === 'pending' || f.status === 'read').length > 0 &&
+                data.items
+                  .filter((f) => f.status === 'pending' || f.status === 'read')
+                  .every((f) => selected.includes(f.id))
+              }
+            />
+            全选本页（{data.items.filter((f) => f.status === 'pending' || f.status === 'read').length} 条）
+          </button>
+
+          {/* 一键已读：不需要勾选，直接清空所有待处理 */}
+          {data.counts?.pending > 0 && (
             <Button
               size="sm"
               variant="secondary"
               className="h-7"
               disabled={acting}
+              title="把所有待处理反馈标记为已读（不改变处理结果）"
               onClick={async () => {
                 setActing(true);
                 try {
-                  const res = await api.post<{ done: number }>('/admin/feedback/batch-read', { ids: selected });
-                  toast.success(`已标记 ${res.done} 条为已读`);
+                  const res = await api.post<{ done: number }>('/admin/feedback/batch-read', {});
+                  toast.success(`已全部标记为已读（${res.done} 条）`);
                   setSelected([]);
                   load();
                   onChanged?.();
@@ -184,31 +207,59 @@ export function FeedbackPanel({ onChanged }: { onChanged?: () => void }) {
                 }
               }}
             >
-              <CheckCheck className="size-3.5" /> 一键已读
+              <CheckCheck className="size-3.5" /> 一键已读全部
             </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="h-7"
-              disabled={acting}
-              onClick={async () => {
-                setActing(true);
-                try {
-                  const res = await api.post<{ done: number; skipped: number }>('/admin/feedback/batch-close', { ids: selected });
-                  toast.success('批量关闭完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
-                  setSelected([]);
-                  load();
-                  onChanged?.();
-                } catch (err) {
-                  toast.error(err instanceof ApiError ? err.message : '操作失败');
-                } finally {
-                  setActing(false);
-                }
-              }}
-            >
-              <X className="size-3.5" /> 批量关闭
-            </Button>
-          </div>
+          )}
+
+          {selected.length > 0 && (
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <span className="text-[11.5px] text-violet-200">已选 {selected.length} 条</span>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="h-7"
+                disabled={acting}
+                onClick={async () => {
+                  setActing(true);
+                  try {
+                    const res = await api.post<{ done: number }>('/admin/feedback/batch-read', { ids: selected });
+                    toast.success(`已标记 ${res.done} 条为已读`);
+                    setSelected([]);
+                    load();
+                    onChanged?.();
+                  } catch (err) {
+                    toast.error(err instanceof ApiError ? err.message : '操作失败');
+                  } finally {
+                    setActing(false);
+                  }
+                }}
+              >
+                <CheckCheck className="size-3.5" /> 标记已读
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7"
+                disabled={acting}
+                onClick={async () => {
+                  setActing(true);
+                  try {
+                    const res = await api.post<{ done: number; skipped: number }>('/admin/feedback/batch-close', { ids: selected });
+                    toast.success('批量关闭完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                    setSelected([]);
+                    load();
+                    onChanged?.();
+                  } catch (err) {
+                    toast.error(err instanceof ApiError ? err.message : '操作失败');
+                  } finally {
+                    setActing(false);
+                  }
+                }}
+              >
+                <X className="size-3.5" /> 批量关闭
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

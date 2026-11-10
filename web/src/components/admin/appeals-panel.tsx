@@ -157,44 +157,64 @@ export function AppealsPanel({ onChanged }: { onChanged?: () => void }) {
         </p>
       </div>
 
-      {/* 批量驳回申诉 */}
-      {selected.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-300/20 bg-rose-400/[0.08] px-3 py-2">
-          <span className="text-[12px] text-rose-100">已选择 {selected.length} 条待审申诉</span>
-          <div className="ml-auto">
-            <Button
-              size="sm"
-              variant="destructive"
-              className="h-7"
-              disabled={acting}
-              onClick={() => {
-                const why = window.prompt('请输入批量驳回理由（至少 2 个字）');
-                if (!why || why.trim().length < 2) return;
-                (async () => {
-                  setActing(true);
-                  try {
-                    const res = await api.post<{ done: number; skipped: number }>('/admin/appeals/batch-reject', {
-                      ids: selected,
-                      reason: why.trim(),
-                    });
-                    toast.success('批量驳回完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
-                    setSelected([]);
-                    load();
-                    onChanged?.();
-                  } catch (err) {
-                    toast.error(err instanceof ApiError ? err.message : '操作失败');
-                  } finally {
-                    setActing(false);
-                  }
-                })();
-              }}
-            >
-              <CheckCheck className="size-3.5" /> 批量驳回
-            </Button>
-          </div>
+      {/* 全选 + 批量操作栏（始终显示） */}
+      {data && data.items.some((a) => a.status === 'pending') && (
+        <div className="glass flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2">
+          <button
+            type="button"
+            onClick={() => {
+              const ids = data.items.filter((a) => a.status === 'pending').map((a) => a.id);
+              const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+              setSelected(all ? [] : ids);
+            }}
+            className="flex items-center gap-2 text-[12px] text-slate-400 transition hover:text-white"
+          >
+            <Checkbox
+              checked={
+                data.items.filter((a) => a.status === 'pending').length > 0 &&
+                data.items.filter((a) => a.status === 'pending').every((a) => selected.includes(a.id))
+              }
+            />
+            全选本页待审（{data.items.filter((a) => a.status === 'pending').length} 条）
+          </button>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+              {selected.length > 0 && (
+                <span className="text-[11.5px] text-rose-200">已选 {selected.length} 条</span>
+              )}
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7"
+                disabled={acting || selected.length === 0}
+                title={selected.length === 0 ? '请先勾选要驳回的申诉' : '批量驳回选中的申诉'}
+                onClick={() => {
+                  const why = window.prompt('请输入批量驳回理由（至少 2 个字）');
+                  if (!why || why.trim().length < 2) return;
+                  (async () => {
+                    setActing(true);
+                    try {
+                      const res = await api.post<{ done: number; skipped: number }>('/admin/appeals/batch-reject', {
+                        ids: selected,
+                        reason: why.trim(),
+                      });
+                      toast.success('批量驳回完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                      setSelected([]);
+                      load();
+                      onChanged?.();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '操作失败');
+                    } finally {
+                      setActing(false);
+                    }
+                  })();
+                }}
+              >
+                <CheckCheck className="size-3.5" /> 批量驳回
+              </Button>
+            </div>
         </div>
       )}
-
 
       {loading ? (
         <div className="space-y-2">
