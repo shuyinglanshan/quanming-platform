@@ -863,4 +863,96 @@ router.post('/sessions/user/:userId/kick', requirePermission('users'), (req, res
   res.json({ ok: true, removed });
 });
 
+
+/**
+ * 批量审核图片申请
+ *
+ * 与单条审核共享同一套写回逻辑，保证行为一致：
+ *   · targetType=user → 写回用户头像
+ *   · targetType=name → 写回圈名图片
+ * 材料完整性校验失败的会被跳过（不静默通过）。
+ */
+router.post('/avatars/batch', requirePermission('users'), (req, res) => {
+  const { ids = [], action = 'approve', reason = '' } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ error: '请选择要处理的图片' });
+  }
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ error: '未知操作' });
+  }
+  if (action === 'reject' && String(reason).trim().length < 2) {
+    return res.status(400).json({ error: '批量驳回需要填写理由（至少 2 个字）' });
+  }
+
+  let done = 0;
+  let skipped = 0;
+  const now = new Date().toISOString();
+
+  for (const id of ids) {
+    const record = db.avatarRequests.find((a) => a.id === id);
+    if (!record || record.status !== 'pending') { skipped += 1; continue; }
+
+    const u = findUserById(record.userId);
+    if (!u) { skipped += 1; continue; }
+
+    if (action === 'reject') {
+      record.status = 'rejected';
+      record.rejectReason = String(reason).trim().slice(0, 200);
+      record.reviewedBy = req.user.id;
+      record.reviewedAt = now;
+      const isName = record.targetType === 'name' && record.targetId;
+      const tName = isName ? db.names.find((n) => n.id === record.targetId) : null;
+      notifyUser(u.id, {
+        category: 'system',
+        level: 'warning',
+        title: isName ? `圈名「${tName?.name || ''}」图片被驳回` : '头像修改申请被驳回',
+        content: `驳回理由：${record.rejectReason}`,
+        link: isName ? `/names/${record.targetId}` : '/me',
+      });
+      done += 1;
+      continue;
+    }
+
+    // 通过
+    const isNameImage = record.targetType === 'name' && record.targetId;
+    if (isNameImage) {
+      const target = db.names.find((n) => n.id === record.targetId);
+      if (!target) { skipped += 1; continue; }
+      const oldUrl = target.imageUrl || '';
+      target.imageUrl = record.imageUrl;
+      target.imageSha256 = record.imageSha256;
+      if (oldUrl && oldUrl !== record.imageUrl) removeAvatarFile(oldUrl);
+      save('names');
+    } else {
+      const oldUrl = u.avatarUrl;
+      updateUser(u.id, { avatarUrl: record.imageUrl, avatarSha256: record.imageSha256 });
+      if (oldUrl && oldUrl !== record.imageUrl) removeAvatarFile(oldUrl);
+    }
+
+    record.status = 'approved';
+    record.reviewedBy = req.user.id;
+    record.reviewedAt = now;
+
+    const tName = isNameImage ? db.names.find((n) => n.id === record.targetId) : null;
+    notifyUser(u.id, {
+      category: 'system',
+      level: 'success',
+      title: isNameImage ? `圈名「${tName?.name || ''}」图片已通过审核` : '头像修改申请已通过',
+      content: isNameImage
+        ? '你提交的圈名图片已通过审核并生效，可在圈名详情页查看。'
+        : '你提交的头像已通过审核并生效，可在个人中心查看。',
+      link: isNameImage ? `/names/${record.targetId}` : '/me',
+    });
+    done += 1;
+  }
+
+  save('avatar_requests');
+  eventLog(
+    req,
+    action === 'approve' ? '批量通过图片' : '批量驳回图片',
+    `成功 ${done} 条 / 跳过 ${skipped} 条`,
+  );
+  res.json({ ok: true, done, skipped });
+});
+
 export default router;

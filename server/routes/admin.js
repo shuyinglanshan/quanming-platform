@@ -578,4 +578,48 @@ router.post('/appeals/:id/reject', requirePermission('appeal'), (req, res) => {
 router.use(manageRoutes);
 router.use(systemRoutes);
 
+
+/**
+ * 批量驳回申诉
+ *
+ * 申诉的「通过」涉及归属转移，风险高，必须逐条审核（需确认原归属者、
+ * 材料完整性等），因此批量操作**只支持驳回**。
+ * 通过请使用单条接口。
+ */
+router.post('/appeals/batch-reject', requirePermission('appeal'), (req, res) => {
+  const { ids = [], reason = '' } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ error: '请选择要处理的申诉' });
+  }
+  const why = String(reason).trim();
+  if (why.length < 2) return res.status(400).json({ error: '请填写驳回理由（至少 2 个字）' });
+
+  let done = 0;
+  let skipped = 0;
+  const now = new Date().toISOString();
+
+  for (const id of ids) {
+    const appeal = db.appeals.find((a) => a.id === id);
+    if (!appeal || appeal.status !== 'pending') { skipped += 1; continue; }
+
+    appeal.status = 'rejected';
+    appeal.rejectReason = why.slice(0, 300);
+    appeal.reviewedAt = now;
+    appeal.reviewedBy = req.user.id;
+
+    notifyUser(appeal.userId, {
+      category: 'appeal',
+      level: 'danger',
+      title: `圈名「${appeal.name}」申诉被驳回`,
+      content: `驳回理由：${appeal.rejectReason}`,
+      link: '/me?tab=appeals',
+    });
+    done += 1;
+  }
+
+  save('appeals');
+  eventLog(req, '批量驳回申诉', `成功 ${done} 条 / 跳过 ${skipped} 条`);
+  res.json({ ok: true, done, skipped });
+});
+
 export default router;

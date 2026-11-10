@@ -4,6 +4,7 @@ import {
   ArrowRightLeft,
   Check,
   Flag,
+  CheckCheck,
   Gavel,
   Loader2,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -56,6 +58,9 @@ export function AppealsPanel({ onChanged }: { onChanged?: () => void }) {
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [acting, setActing] = useState(false);
+
+  // 批量选择
+  const [selected, setSelected] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -152,6 +157,45 @@ export function AppealsPanel({ onChanged }: { onChanged?: () => void }) {
         </p>
       </div>
 
+      {/* 批量驳回申诉 */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-300/20 bg-rose-400/[0.08] px-3 py-2">
+          <span className="text-[12px] text-rose-100">已选择 {selected.length} 条待审申诉</span>
+          <div className="ml-auto">
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7"
+              disabled={acting}
+              onClick={() => {
+                const why = window.prompt('请输入批量驳回理由（至少 2 个字）');
+                if (!why || why.trim().length < 2) return;
+                (async () => {
+                  setActing(true);
+                  try {
+                    const res = await api.post<{ done: number; skipped: number }>('/admin/appeals/batch-reject', {
+                      ids: selected,
+                      reason: why.trim(),
+                    });
+                    toast.success('批量驳回完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                    setSelected([]);
+                    load();
+                    onChanged?.();
+                  } catch (err) {
+                    toast.error(err instanceof ApiError ? err.message : '操作失败');
+                  } finally {
+                    setActing(false);
+                  }
+                })();
+              }}
+            >
+              <CheckCheck className="size-3.5" /> 批量驳回
+            </Button>
+          </div>
+        </div>
+      )}
+
+
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -162,6 +206,15 @@ export function AppealsPanel({ onChanged }: { onChanged?: () => void }) {
         <div className="space-y-2">
           {data.items.map((a) => (
             <div key={a.id} className="glass-soft flex flex-col gap-3 rounded-2xl p-4 sm:flex-row sm:items-center">
+              {a.status === 'pending' && (
+                <Checkbox
+                  checked={selected.includes(a.id)}
+                  onCheckedChange={(v) =>
+                    setSelected((prev) => (v ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
+                  }
+                  className="mt-1 shrink-0"
+                />
+              )}
               <div className="flex min-w-0 flex-1 items-start gap-3">
                 <div
                   className={cn(

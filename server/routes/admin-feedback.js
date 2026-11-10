@@ -226,4 +226,52 @@ router.post('/courts/:id/override', requirePermission('appeal'), (req, res) => {
   res.json({ ok: true });
 });
 
+
+/* ================= 批量处理 ================= */
+
+/**
+ * 批量标记已读（一键已读）
+ *
+ * 用于「小红点清零」场景：用户希望快速清掉未读提醒，
+ * 但不一定真的要逐一审核。
+ *
+ * 安全说明：这里只把状态从 pending 改成 read（不再计入 pending 计数），
+ * 不会跳过任何实质审核 —— 记录仍在列表中，可继续处理。
+ */
+router.post('/feedback/batch-read', requirePermission('feedback'), (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  let list = db.feedback.filter((f) => f.status === 'pending');
+  if (ids) list = list.filter((f) => ids.includes(f.id));
+  if (!list.length) return res.json({ ok: true, done: 0 });
+
+  const now = new Date().toISOString();
+  for (const f of list) {
+    f.status = 'read';
+    f.readAt = now;
+  }
+  save('feedback');
+  eventLog(req, '批量已读反馈', `${list.length} 条`);
+  res.json({ ok: true, done: list.length });
+});
+
+/** 批量处理反馈（关闭） */
+router.post('/feedback/batch-close', requirePermission('feedback'), (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ error: '请选择要处理的反馈' });
+
+  let done = 0;
+  let skipped = 0;
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    const f = db.feedback.find((x) => x.id === id);
+    if (!f || f.status === 'closed') { skipped += 1; continue; }
+    f.status = 'closed';
+    f.closedAt = now;
+    done += 1;
+  }
+  save('feedback');
+  eventLog(req, '批量关闭反馈', `成功 ${done} 条 / 跳过 ${skipped} 条`);
+  res.json({ ok: true, done, skipped });
+});
+
 export default router;

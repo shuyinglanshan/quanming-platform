@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import {
   Activity,
   Ban,
+  ChevronRight,
   Clock3,
   Gauge,
   Loader2,
@@ -546,12 +547,19 @@ export function SecurityPanel() {
                 {data.events.slice(0, 20).map((e) => {
                   const meta = EVENT_META[e.type] || { label: e.type, tone: 'border-white/15 bg-white/5 text-slate-300' };
                   return (
-                    <div key={e.id} className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2">
+                    <button
+                      key={e.id}
+                      type="button"
+                      onClick={() => openIpDetail(e.ip)}
+                      title="点击查看该 IP 的完整访问详情"
+                      className="flex w-full items-center gap-2 rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2 text-left transition hover:border-violet-300/30 hover:bg-white/[0.06]"
+                    >
                       <span className={cn('shrink-0 rounded-full border px-1.5 py-0 text-[9.5px]', meta.tone)}>{meta.label}</span>
                       <span className="font-mono text-[11.5px] text-slate-200">{e.ip}</span>
                       <span className="truncate text-[10px] text-slate-500">{e.reason}</span>
                       <span className="ml-auto shrink-0 text-[10px] text-slate-600">{relativeTime(e.createdAt)}</span>
-                    </div>
+                      <ChevronRight className="size-3 shrink-0 text-slate-600" />
+                    </button>
                   );
                 })}
               </div>

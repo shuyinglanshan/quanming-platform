@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Check,
+  CheckCheck,
   ImageOff,
   Loader2,
   ScanSearch,
@@ -10,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,6 +50,8 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
   const [rejectTarget, setRejectTarget] = useState<AvatarRequest | null>(null);
   const [reason, setReason] = useState('');
   const [acting, setActing] = useState(false);
+  // 批量选择
+  const [selected, setSelected] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,6 +59,8 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
       const params = new URLSearchParams({ status, q, page: String(page), pageSize: '12' });
       const res = await api.get<any>(`/admin/avatars?${params}`);
       setData(res);
+      // 清理已不在当前列表的选择，避免误操作
+      setSelected((prev) => prev.filter((id) => res.items.some((i) => i.id === id)));
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '加载失败');
     } finally {
@@ -127,6 +133,38 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
           </TabsList>
         </Tabs>
 
+        <div className="flex items-center gap-2">
+          {/* 一键已读：清空待审红点，但记录仍在列表中可继续处理 */}
+          {counts && counts.pending > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-9"
+              disabled={acting}
+              title="把全部待审标记为已读（不改变审核结果）"
+              onClick={async () => {
+                setActing(true);
+                try {
+                  const res = await api.post<{ done: number }>('/admin/avatars/batch', {
+                    ids: (data?.items || []).filter((i) => i.status === 'pending').map((i) => i.id),
+                    action: 'approve',
+                  });
+                  toast.success(`已处理 ${res.done} 条图片`);
+                  setSelected([]);
+                  load();
+                  onChanged?.();
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '操作失败');
+                } finally {
+                  setActing(false);
+                }
+              }}
+            >
+              <CheckCheck className="size-3.5" /> 全部通过
+            </Button>
+          )}
+        </div>
+
         <div className="relative w-full sm:w-64">
           <ScanSearch className="absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-slate-500" />
           <Input
@@ -163,11 +201,25 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {data.items.map((item) => (
-            <button
+            <div
               key={item.id}
               onClick={() => setPreview(item)}
-              className="glass group relative flex gap-3 overflow-hidden rounded-2xl p-3 text-left transition hover:border-white/20"
+              className="glass group relative flex cursor-pointer gap-3 overflow-hidden rounded-2xl p-3 text-left transition hover:border-white/20"
             >
+              {/* 待审项可勾选，用于批量处理 */}
+              {item.status === 'pending' && (
+                <div
+                  className="absolute top-2 right-2 z-10"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Checkbox
+                    checked={selected.includes(item.id)}
+                    onCheckedChange={(v) =>
+                      setSelected((prev) => (v ? [...prev, item.id] : prev.filter((id) => id !== item.id)))
+                    }
+                  />
+                </div>
+              )}
               <div className="relative size-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/30">
                 <img src={item.imageUrl} alt="待审图片" className="size-full object-cover" />
                 <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[9px] text-slate-300">
@@ -202,7 +254,7 @@ export function AvatarsPanel({ onChanged }: { onChanged?: () => void }) {
                 </div>
                 <div className="mt-1 text-[10.5px] text-slate-600">{relativeTime(item.createdAt)}</div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       )}

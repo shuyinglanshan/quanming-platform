@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Bug, CheckCircle2, Eye, HelpCircle, Lightbulb, Loader2, MessageSquare,
-  Reply, Search, ShieldAlert, Trash2, XCircle,
+  Reply, Search, ShieldAlert, Trash2, X, XCircle,
+  CheckCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,6 +40,9 @@ export function FeedbackPanel({ onChanged }: { onChanged?: () => void }) {
   const [detail, setDetail] = useState<Feedback | null>(null);
   const [reply, setReply] = useState('');
   const [acting, setActing] = useState(false);
+
+  // 批量选择
+  const [selected, setSelected] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +159,59 @@ export function FeedbackPanel({ onChanged }: { onChanged?: () => void }) {
         <Button size="sm" variant="secondary" onClick={load}>刷新</Button>
       </div>
 
+      {/* 批量操作：一键已读 / 批量关闭 */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-violet-300/20 bg-violet-400/[0.08] px-3 py-2">
+          <span className="text-[12px] text-violet-100">已选择 {selected.length} 条反馈</span>
+          <div className="ml-auto flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7"
+              disabled={acting}
+              onClick={async () => {
+                setActing(true);
+                try {
+                  const res = await api.post<{ done: number }>('/admin/feedback/batch-read', { ids: selected });
+                  toast.success(`已标记 ${res.done} 条为已读`);
+                  setSelected([]);
+                  load();
+                  onChanged?.();
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '操作失败');
+                } finally {
+                  setActing(false);
+                }
+              }}
+            >
+              <CheckCheck className="size-3.5" /> 一键已读
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7"
+              disabled={acting}
+              onClick={async () => {
+                setActing(true);
+                try {
+                  const res = await api.post<{ done: number; skipped: number }>('/admin/feedback/batch-close', { ids: selected });
+                  toast.success('批量关闭完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                  setSelected([]);
+                  load();
+                  onChanged?.();
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : '操作失败');
+                } finally {
+                  setActing(false);
+                }
+              }}
+            >
+              <X className="size-3.5" /> 批量关闭
+            </Button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="glass flex items-center justify-center gap-2 rounded-2xl py-16 text-[13px] text-slate-400">
           <Loader2 className="size-4 animate-spin" /> 加载中…
@@ -173,6 +231,15 @@ export function FeedbackPanel({ onChanged }: { onChanged?: () => void }) {
                 key={f.id}
                 className="glass flex flex-col gap-2.5 rounded-2xl p-4 transition hover:border-white/16 sm:flex-row sm:items-start"
               >
+                {(f.status === 'pending' || f.status === 'read') && (
+                  <Checkbox
+                    checked={selected.includes(f.id)}
+                    onCheckedChange={(v) =>
+                      setSelected((prev) => (v ? [...prev, f.id] : prev.filter((id) => id !== f.id)))
+                    }
+                    className="mt-1.5 shrink-0"
+                  />
+                )}
                 <div className={cn(
                   'mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl border',
                   f.kind === 'vulnerability'
