@@ -17,6 +17,8 @@ import { cn, relativeTime } from '@/lib/utils';
 
 type SessionRow = {
   sessionId: string;
+  /** 踢出操作用的引用 ID（服务端 token 哈希前缀，非完整 SID） */
+  sessionRef: string;
   userId: string;
   username: string;
   nickname: string;
@@ -82,9 +84,9 @@ export function SessionsPanel() {
   }, [load]);
 
   const kick = async (row: SessionRow) => {
-    setActing(row.sessionId);
+    setActing(row.sessionRef);
     try {
-      await api.post(`/admin/sessions/${encodeURIComponent(row.sessionId)}/kick`);
+      await api.post(`/admin/sessions/${encodeURIComponent(row.sessionRef)}/kick`);
       toast.success(`已踢出「${row.nickname}」的会话`);
       load();
     } catch (err) {
@@ -206,7 +208,7 @@ export function SessionsPanel() {
                     title={row.current ? '不能踢出当前会话' : '踢出这个会话'}
                     onClick={() => kick(row)}
                   >
-                    {acting === row.sessionId ? (
+                    {acting === row.sessionRef ? (
                       <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <LogOut className="size-3.5" />

@@ -235,25 +235,26 @@ export function assertSessionId(req, res, next) {
   if (!req.user || !req.session) return next();
 
   const provided = String(req.sessionIdFromBody || req.sessionIdFromHeader || '').trim();
+  const strict = String(process.env.SESSION_ID_STRICT || '') === '1';
 
   /**
-   * 会话 ID 校验策略（宽松模式）
+   * 会话 ID 校验
    *
-   * 设计取舍：SID 的价值是「防止只偷到 cookie 就能冒充」，
-   * 但它存在浏览器本地，部署更新、清缓存、换标签页都可能丢失，
-   * 若因此拒绝请求，用户会频繁遇到「刷新就提示会话校验失败」。
+   * ⚠️ 修复记录：此前「宽松模式」会在 SID 缺失/不匹配时，
+   * 通过响应头 X-QM-Sid-Refresh **直接把正确的 sessionId 返回**，
+   * 等于攻击者只要偷到 cookie，发一次请求就能拿到 SID ——
+   * 防护完全失效（SID 失去任何意义）。
    *
-   * 因此改为：
-   *   · 未携带 SID  → 自动把服务端的 sessionId 回填给前端（不拒绝）
-   *   · SID 不匹配  → 视为本地缓存过期，同样回填而非拒绝
-   *   · 角色前缀不符 → 说明本地 SID 属于其他角色，回填
+   * 现在的策略：
+   *   1. 缺失 SID      → 拒绝（strict）或放行但不回填（兼容）
+   *   2. SID 不匹配    → 拒绝（strict）或放行但不回填（兼容）
+   *   3. **任何情况下都不下发服务端的完整 SID**
+   *   4. 若确需同步，只返回一个「指纹」（前 6 位 + 哈希后 4 位），
+   *      用于前端判断"我的 SID 是否过期"，无法据此伪造请求
    *
-   * 真正的安全边界仍由 cookie 会话 + 人机验证 + 频率限制承担；
-   * SID 退化为「防误用提示」而非「硬性门禁」。
-   *
-   * 如需恢复严格模式，设置环境变量 SESSION_ID_STRICT=1。
+   * 也就是说：SID 只能由登录接口在建立会话时下发一次，
+   * 之后服务端只会"验证"它，绝不会"重新告知"它。
    */
-  const strict = String(process.env.SESSION_ID_STRICT || '') === '1';
 
   if (!provided) {
     if (strict) {
@@ -262,22 +263,23 @@ export function assertSessionId(req, res, next) {
         code: 'SESSION_ID_REQUIRED',
       });
     }
-    // 宽松：通过响应头把正确 SID 回填给前端
-    res.setHeader('X-QM-Sid-Refresh', req.session.sessionId || '');
+    // 兼容模式：放行但**不下发任何可用于伪造的信息**
+    // 只告诉前端"当前有会话，但你没带 SID"
+    res.setHeader('X-QM-Sid-State', 'missing');
     return next();
   }
 
-  // 与服务端会话比对
-  if (provided !== req.session.sessionId) {
+  // 与服务端会话比对（恒定时间比较，防时序侧信道）
+  if (!safeEqual(provided, req.session.sessionId || '')) {
     if (strict) {
-      try { eventLog(req, '会话ID不匹配', `${provided.slice(0, 32)}`); } catch { /* 忽略 */ }
+      try { eventLog(req, '会话ID不匹配', provided.slice(0, 8)); } catch { /* 忽略 */ }
       return res.status(401).json({
         error: '会话校验失败，请重新登录',
         code: 'SESSION_ID_MISMATCH',
       });
     }
-    // 宽松：本地 SID 已过期（如部署更新），回填新值让前端自动修复
-    res.setHeader('X-QM-Sid-Refresh', req.session.sessionId || '');
+    // 兼容模式：放行但不回填真实 SID，仅返回状态标记
+    res.setHeader('X-QM-Sid-State', 'mismatch');
     return next();
   }
 
@@ -285,17 +287,29 @@ export function assertSessionId(req, res, next) {
   const expectPrefix = sessionRolePrefix(req.user.role);
   if (!provided.startsWith(`${expectPrefix}-`)) {
     if (strict) {
-      try { eventLog(req, '会话角色不匹配', `${provided.slice(0, 12)}`); } catch { /* 忽略 */ }
+      try { eventLog(req, '会话角色不匹配', provided.slice(0, 8)); } catch { /* 忽略 */ }
       return res.status(403).json({
         error: '会话角色校验失败，请重新登录',
         code: 'SESSION_ROLE_MISMATCH',
       });
     }
-    res.setHeader('X-QM-Sid-Refresh', req.session.sessionId || '');
+    res.setHeader('X-QM-Sid-State', 'role-mismatch');
     return next();
   }
 
   next();
+}
+
+/** 恒定时间字符串比较，避免时序攻击推断 SID */
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  try {
+    return crypto.timingSafeEqual(ba, bb);
+  } catch {
+    return false;
+  }
 }
 
 
@@ -308,7 +322,7 @@ function expireSession(session, reason, req = null) {
   // eventLog 依赖 req.get()，没有请求上下文时只写控制台，避免崩溃
   try {
     if (req && typeof req.get === 'function') {
-      eventLog(req, '会话失效', `${session.sessionId || '-'} · ${reason}`);
+      eventLog(req, '会话失效', `${String(session.sessionId || '-').slice(0, 8)}… · ${reason}`);
     } else {
       console.log('[session] 会话失效:', session.sessionId || '-', '·', reason);
     }
@@ -404,4 +418,36 @@ export function heartbeatInterval() {
   // 注意：先换算成毫秒再取 max，否则 Math.max(15000, 60)*1000 = 15000000（4 小时）
   const sec = Math.max(15, Number(process.env.SESSION_HEARTBEAT_SECONDS) || 60);
   return sec * 1000;
+}
+
+/**
+ * 轮换会话 ID
+ *
+ * 用于解决「刷新后需要恢复 SID」与「SID 不能被随意取回」的矛盾：
+ *   · 前端刷新后 sessionStorage 丢失，需要重新拿到 SID
+ *   · 但如果服务端只是"告知"旧 SID，攻击者拿到 cookie 后也能拿到它
+ *
+ * 方案：每次恢复登录态时**换发一个新 SID**，旧值立即作废。
+ *   · 攻击者若抢先调用，会拿到 SID 但随后被合法用户的下一次轮换顶掉
+ *   · 攻击者若后调用，旧 SID 已失效，拿到的也只是即将被顶掉的新值
+ *   · 配合 SID 不落日志、不落响应正文之外的可见位置，
+ *     实际攻击窗口极小
+ *
+ * 更重要的是：**SID 本身不是凭证**，credential 始终是 httpOnly cookie。
+ * SID 只是「同一 cookie 下的二次确认」，它的价值在于
+ * 让「仅窃取 cookie」难以直接利用（需要额外一步拿 SID，且随时可能失效）。
+ *
+ * @returns {string} 新的 sessionId
+ */
+export function rotateSessionId(session) {
+  if (!session) return '';
+  let next = generateSessionId(session.role || 'user');
+  let guard = 0;
+  while (db.sessions.some((s) => s !== session && s.sessionId === next) && guard < 5) {
+    next = generateSessionId(session.role || 'user');
+    guard += 1;
+  }
+  session.sessionId = next;
+  save('sessions');
+  return next;
 }

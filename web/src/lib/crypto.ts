@@ -259,11 +259,19 @@ export async function secureFetch(
     cache: 'no-store',
   });
 
-  // 服务端在 SID 缺失/过期时会通过响应头回填正确值，
-  // 前端自动同步，避免下次请求继续用旧 SID 而被拒
-  const sidRefresh = res.headers.get('x-qm-sid-refresh');
-  if (sidRefresh) {
-    setSessionId(sidRefresh);
+  /**
+   * SID 状态标记（安全修复）
+   *
+   * 此前服务端会通过 X-QM-Sid-Refresh 回填真实 SID，
+   * 导致攻击者只要拿到 cookie 就能取回 SID —— 防护失效。
+   *
+   * 现在服务端只返回状态标记（missing / mismatch / role-mismatch），
+   * **绝不下发 SID 本身**。前端据此清掉本地失效 SID，
+   * 由下次 /auth/me 重新建立（若会话仍有效则会重新下发）。
+   */
+  const sidState = res.headers.get('x-qm-sid-state');
+  if (sidState) {
+    setSessionId(null);
   }
 
   const text = await res.text();

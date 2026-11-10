@@ -1,6 +1,7 @@
+import crypto from 'node:crypto';
 import express from 'express';
 import { db, save, publicUser, findUserById, maskEmail, ROLES, ROLE_LABELS } from '../lib/db.js';
-import { requirePermission } from '../lib/auth.js';
+import { requirePermission, sessionToken } from '../lib/auth.js';
 import { paginate, sanitizeText } from '../lib/util.js';
 import { shapeName } from './names.js';
 import { eventLog } from '../lib/logger.js';
@@ -11,7 +12,6 @@ import { lookupIp } from '../lib/ip-geo.js';
 import { resolveIp } from '../lib/ip-geo-remote.js';
 import { isPermanentlyBlocked, activeTempBlock } from '../lib/guard.js';
 import { hashPassword } from '../lib/password.js';
-import crypto from 'node:crypto';
 import { deleteName } from '../lib/repo.js';
 
 const router = express.Router();
@@ -781,7 +781,16 @@ router.get('/sessions', requirePermission('users'), (req, res) => {
       const u = findUserById(s.userId);
       const lastBeat = s.lastHeartbeatAt || s.lastActiveAt || s.createdAt;
       return {
-        sessionId: s.sessionId || '—',
+        // 展示用：只给前 8 位，避免有 users 权限的人据此冒充他人
+        sessionId: s.sessionId ? `${s.sessionId.slice(0, 8)}…` : '—',
+        /**
+         * 踢出操作用的引用 ID
+         *
+         * 不回传完整 SID（否则等于把凭证交给管理员前端，
+         * 一旦 XSS 或浏览器插件读取即可冒充）。
+         * 改为返回 token 的哈希前缀，服务端据此反查会话。
+         */
+        sessionRef: s.token ? crypto.createHash('sha256').update(s.token).digest('hex').slice(0, 16) : '',
         userId: s.userId,
         username: u?.username || '—',
         nickname: u?.nickname || '—',
@@ -796,7 +805,8 @@ router.get('/sessions', requirePermission('users'), (req, res) => {
         heartbeatAgo: Math.max(0, Math.floor((now - lastBeat) / 1000)),
         expiresAt: s.expiresAt,
         // 是否为本请求所在会话
-        current: s.sessionId === req.sessionId,
+        // 用 token 比对当前会话（SID 已脱敏，不参与比较）
+        current: s.token === sessionToken(req),
       };
     })
     .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
@@ -814,8 +824,17 @@ router.get('/sessions', requirePermission('users'), (req, res) => {
 });
 
 /** 踢出指定会话（按 sessionId） */
-router.post('/sessions/:sessionId/kick', requirePermission('users'), (req, res) => {
-  const target = db.sessions.find((s) => s.sessionId === req.params.sessionId);
+router.post('/sessions/:sessionRef/kick', requirePermission('users'), (req, res) => {
+  /**
+   * 按 sessionRef（token 哈希前缀）定位会话
+   *
+   * 不接收完整 SID：SID 是二次确认凭证，
+   * 让管理员前端持有它等于扩大泄露面（XSS / 插件可读取）。
+   * 改用不可逆的哈希前缀，服务端遍历比对即可定位。
+   */
+  const refOf = (s) =>
+    s.token ? crypto.createHash('sha256').update(s.token).digest('hex').slice(0, 16) : '';
+  const target = db.sessions.find((s) => refOf(s) === req.params.sessionRef);
   if (!target) return res.status(404).json({ error: '会话不存在或已失效' });
 
   // 防越权：非 admin 不能踢出同级或更高权限的会话
@@ -831,7 +850,7 @@ router.post('/sessions/:sessionId/kick', requirePermission('users'), (req, res) 
   db.sessions = db.sessions.filter((s) => s.sessionId !== req.params.sessionId);
   save('sessions');
 
-  eventLog(req, '踢出会话', `${req.params.sessionId} · ${findUserById(target.userId)?.username || '-'}`);
+  eventLog(req, '踢出会话', `${req.params.sessionRef} · ${findUserById(target.userId)?.username || '-'}`);
   res.json({ ok: true });
 });
 

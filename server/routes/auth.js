@@ -25,6 +25,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   sessionToken,
+  rotateSessionId,
   requireAuth,
 } from '../lib/auth.js';
 import {
@@ -693,11 +694,26 @@ router.post('/login-code', (req, res) => {
 
 /* ---------------- 会话 ---------------- */
 router.get('/me', attachUser, (req, res) => {
-  // 返回 sessionId 供前端恢复（刷新页面后 sessionStorage 已清空）
+  /**
+   * 恢复登录态
+   *
+   * 安全设计（SID 轮换）：
+   *   此前直接返回 sessionId，等于「只要持有 cookie 就能取回 SID」，
+   *   使 SID 的二次确认作用失效。
+   *
+   *   现在改为：每次恢复登录态时**换发新 SID**，旧值立即作废。
+   *   · 正常用户：刷新后拿到新 SID，无感
+   *   · 攻击者：即使抢先调用拿到 SID，也会被合法用户的下一次轮换顶掉；
+   *     若后调用，拿到的是新值但已无法用于之前的请求
+   *
+   *   注意：凭证始终是 httpOnly cookie，SID 只是二次确认，
+   *   不承担主要认证职责。
+   */
+  const sessionId = req.user && req.session ? rotateSessionId(req.session) : null;
   res.json({
     user: req.user ? publicUser(req.user) : null,
     mailConfigured: isMailConfigured(),
-    sessionId: req.session?.sessionId || null,
+    sessionId,
   });
 });
 
