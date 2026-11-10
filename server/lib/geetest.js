@@ -224,7 +224,10 @@ export async function verifyGeetest(scene, payload, ctx = {}) {
     const passed = data.result === 'success' || (data.status === 'success' && data.result !== 'fail');
     if (passed) {
       usedLots.set(lotKey, Date.now());
-      return { ok: true, raw: data };
+      // 签发短期通行证：同一用户后续步骤（如发码后再注册）
+      // 不必重复完成极验，凭通行证即可
+      const pass = issueCaptchaPass(scene, ctx.ip);
+      return { ok: true, raw: data, pass };
     }
     return { ok: false, reason: String(data.reason || 'REJECTED'), raw: data };
   } catch (err) {
@@ -447,7 +450,8 @@ export function verifyClickCaptcha(payload, ctx = {}) {
   // 一次性消费
   usedClicks.set(challengeId, Date.now());
   issuedChallenges.delete(challengeId);
-  return { ok: true };
+  // 签发短期通行证，供后续步骤复用
+  return { ok: true, pass: issueCaptchaPass('click', ipKey) };
 }
 
 /**
@@ -467,4 +471,113 @@ export async function verifyAnyCaptcha(scene, body, ctx = {}) {
     return verifyClickCaptcha(body, ctx);
   }
   return { ok: false, reason: 'MISSING_FIELDS' };
+}
+
+
+/* ============================================================
+ * 人机验证通行证
+ *
+ * 问题背景：
+ *   极验的 lot_number 与点击挑战都是一次性的，
+ *   但注册流程需要在两个步骤验证人机：
+ *     ① 发送邮箱验证码时
+ *     ② 提交注册表单时
+ *   若两次都要求重新完成极验，用户体验极差；
+ *   若第二次直接复用 lot_number，又会被防重放机制拒绝
+ *   （这正是「完成验证后点注册却提示未通过」的原因）。
+ *
+ * 解决方案：
+ *   首次验证通过后签发一个**短期一次性通行证**（5 分钟），
+ *   前端在后续步骤携带它，服务端校验签名与时效，
+ *   无需再次完成极验，也不会突破「一次验证一次用」的安全语义
+ *   （通行证本身有 TTL、与 IP 绑定、可撤销）。
+ * ============================================================ */
+
+const CAPTCHA_PASS_TTL = 5 * 60 * 1000;
+const captchaPasses = new Map();
+
+function passSecret() {
+  return String(process.env.CAPTCHA_PASS_SECRET || 'qm-captcha-pass-v1');
+}
+
+/**
+ * 签发通行证
+ * @param {string} scene 场景标识
+ * @param {string} ip 绑定的来源 IP
+ */
+export function issueCaptchaPass(scene, ip) {
+  const now = Date.now();
+  const id = crypto.randomBytes(16).toString('hex');
+  const payload = `${id}|${scene}|${ip || ''}|${now}`;
+  const sig = crypto.createHmac('sha256', passSecret()).update(payload).digest('hex');
+  captchaPasses.set(id, {
+    scene,
+    ip: String(ip || ''),
+    expiresAt: now + CAPTCHA_PASS_TTL,
+  });
+  // 定期清理
+  if (captchaPasses.size > 5000) {
+    for (const [k, v] of captchaPasses) {
+      if (Date.now() > v.expiresAt) captchaPasses.delete(k);
+    }
+  }
+  return `${id}.${sig}`;
+}
+
+/**
+ * 校验通行证
+ * @param {string} token `${id}.${sig}`
+ * @param {string} scene
+ * @param {string} ip
+ */
+export function verifyCaptchaPass(token, scene, ip) {
+  const raw = String(token || '').trim();
+  if (!raw) return { ok: false, reason: 'NO_PASS' };
+
+  const dot = raw.lastIndexOf('.');
+  if (dot < 0) return { ok: false, reason: 'PASS_FORMAT' };
+
+  const id = raw.slice(0, dot);
+  const sig = raw.slice(dot + 1);
+  const rec = captchaPasses.get(id);
+  if (!rec) return { ok: false, reason: 'PASS_NOT_FOUND' };
+  if (Date.now() > rec.expiresAt) {
+    captchaPasses.delete(id);
+    return { ok: false, reason: 'PASS_EXPIRED' };
+  }
+
+  // 场景与 IP 必须匹配（防止跨场景/跨来源盗用）
+  if (rec.scene !== scene) return { ok: false, reason: 'PASS_SCENE_MISMATCH' };
+  if (rec.ip && ip && rec.ip !== String(ip)) return { ok: false, reason: 'PASS_IP_MISMATCH' };
+
+  // 签名校验
+  const expect = crypto
+    .createHmac('sha256', passSecret())
+    .update(`${id}|${rec.scene}|${rec.ip}|${rec.expiresAt - CAPTCHA_PASS_TTL}`)
+    .digest('hex');
+  if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) {
+    return { ok: false, reason: 'PASS_SIGNATURE' };
+  }
+
+  // 一次性消费
+  captchaPasses.delete(id);
+  return { ok: true };
+}
+
+/**
+ * 统一入口：允许「新凭据」或「已有通行证」二选一
+ *
+ * 用于注册/登录/发码这类需要人机验证的接口：
+ *   · 首次调用传极验凭据 → 通过后返回 pass
+ *   · 后续步骤传 pass → 直接通过，不必重新验证
+ */
+export async function verifyAnyCaptchaWithPass(scene, body, ctx = {}) {
+  // 1) 优先用通行证
+  if (body?.captcha_pass) {
+    const p = verifyCaptchaPass(body.captcha_pass, scene, ctx.ip);
+    if (p.ok) return { ok: true, reused: true };
+    // 通行证无效则继续走新凭据校验
+  }
+  // 2) 新凭据
+  return verifyAnyCaptcha(scene, body, ctx);
 }

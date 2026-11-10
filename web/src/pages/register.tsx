@@ -52,6 +52,8 @@ export default function RegisterPage() {
   const gtRef = useRef<GeetestHandle>(null);
   const [gtPayload, setGtPayload] = useState<AnyCaptchaPayload | null>(null);
   const [gtConfigured, setGtConfigured] = useState(false);
+  // 人机验证通行证：发码时获取，注册时复用（避免极验 lot_number 一次性导致二次校验失败）
+  const [captchaPass, setCaptchaPass] = useState<string | null>(null);
   const [checking, setChecking] = useState<{ username?: string; phone?: string }>({});
   const timerRef = useRef<number | null>(null);
 
@@ -109,11 +111,13 @@ export default function RegisterPage() {
     if (gtConfigured && !gtPayload) return toast.error('请先完成人机验证');
     setSending(true);
     try {
-      await api.post('/auth/send-code', {
+      const sent = await api.post<{ captchaPass?: string | null }>('/auth/send-code', {
         email: email.trim(),
         purpose: 'register',
         ...(gtPayload || {}),
       });
+      // 保存通行证：注册提交时复用，无需再次完成极验
+      if (sent?.captchaPass) setCaptchaPass(sent.captchaPass);
       setCountdown(60);
       setSentOnce(true);
       toast.success('验证码已发送至邮箱', { description: '10 分钟内有效，请注意查收（含垃圾箱）' });
@@ -147,7 +151,8 @@ export default function RegisterPage() {
         pwdAlg: 'sha256',
         email: email.trim(),
         code,
-        ...(gtPayload || {}),
+        // 优先用通行证（发码时已完成验证），否则用当前极验凭据
+        ...(captchaPass ? { captcha_pass: captchaPass } : gtPayload || {}),
       };
       const data = await api.post<{ user: User }>('/auth/register', payload);
       setUser(data.user);

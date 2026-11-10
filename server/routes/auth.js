@@ -41,7 +41,14 @@ import { sendCodeMail, isMailConfigured } from '../lib/mailer.js';
 import { eventLog } from '../lib/logger.js';
 import { trustedClientIp } from '../lib/ip.js';
 import { checkLock, recordFailure, recordSuccess } from '../lib/login-guard.js';
-import { geetestConfigured, publicGeetestConfig, verifyGeetest, verifyAnyCaptcha, issueClickChallenge } from '../lib/geetest.js';
+import {
+  geetestConfigured,
+  publicGeetestConfig,
+  verifyGeetest,
+  verifyAnyCaptcha,
+  verifyAnyCaptchaWithPass,
+  issueClickChallenge,
+} from '../lib/geetest.js';
 import {
   checkRegisterAllowed,
   recordRegisterAttempt,
@@ -192,7 +199,7 @@ router.post('/send-code', async (req, res) => {
   // 发送验证码前必须通过人机验证（防刷邮箱 / 短信轰炸）
   // 场景映射：更换邮箱使用独立的 email 场景凭据
   const scene = purpose === 'email' ? 'email' : purpose === 'register' ? 'register' : 'login';
-  const captcha = await verifyAnyCaptcha(scene, req.body, { ip: clientIp(req) });
+  const captcha = await verifyAnyCaptchaWithPass(scene, req.body, { ip: clientIp(req) });
   if (!captcha.ok) {
     eventLog(req, '发码人机验证失败', `${email} · ${captcha.reason || ''}`.slice(0, 80), 'error');
     return res.status(400).json({
@@ -240,6 +247,9 @@ router.post('/send-code', async (req, res) => {
       expiresIn: CODE_TTL / 1000,
       resendAfter: RESEND_GAP / 1000,
       message: '验证码已发送至你的 QQ 邮箱',
+      // 人机验证通行证：后续提交注册时携带，无需重复完成极验
+      // （极验 lot_number 一次性，不复用会导致「发码通过但注册提示未通过」）
+      captchaPass: captcha.pass || null,
     });
   } catch (err) {
     console.error('[auth] 验证码邮件发送失败:', err.message);
@@ -326,7 +336,7 @@ async function precheckRegister(req) {
   if (limited) return { ok: false, status: limited.status, body: limited.body };
 
   if (geetestConfigured('register')) {
-    const gt = await verifyAnyCaptcha('register', req.body, { ip: clientIp(req) });
+    const gt = await verifyAnyCaptchaWithPass('register', req.body, { ip: clientIp(req) });
     if (!gt.ok) {
       eventLog(req, '注册人机验证失败', String(gt.reason || '').slice(0, 60), 'error');
       return {
@@ -523,7 +533,7 @@ router.post('/login', async (req, res) => {
   // 密码正确后再做人机验证：
   // 这样密码错误时不必消耗验证次数，也避免验证结果被用于账号枚举
   if (geetestConfigured('login')) {
-    const gt = await verifyAnyCaptcha('login', req.body, { ip: clientIp(req) });
+    const gt = await verifyAnyCaptchaWithPass('login', req.body, { ip: clientIp(req) });
     if (!gt.ok) {
       eventLog(req, '登录人机验证失败', String(gt.reason || '').slice(0, 60), 'error');
       return res.status(400).json({

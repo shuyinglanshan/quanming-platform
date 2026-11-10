@@ -66,6 +66,10 @@ app.use(attachUser);
 // 会话 ID 校验：必须在 attachUser 之后（需要 req.user / req.session 才能比对）
 // 低风险只读接口豁免，其余请求需携带与会话绑定的 sessionId
 app.use((req, res, next) => {
+  // 只对 API 请求做会话 ID 校验；
+  // HTML 页面导航（如刷新 /me）无法携带自定义头，必须放行，
+  // 否则会直接把 JSON 错误当成页面内容返回。
+  if (!req.path.startsWith('/api')) return next();
   if (isLowRiskRequest(req)) return next();
   return assertSessionId(req, res, next);
 });
@@ -159,6 +163,16 @@ if (fs.existsSync(WEB_DIST)) {
 
   const isSpaRoute = (p) =>
     SPA_ROUTES.some((r) => (typeof r === 'string' ? r === p : r.test(p)));
+
+  /**
+   * 扫描器常探路径：显式返回，避免产生大量 404 噪音
+   * （噪音会淹没真实攻击告警，也会浪费日志空间）
+   */
+  app.get('/robots.txt', (_req, res) => {
+    res.type('text/plain').send('User-agent: *\nDisallow: /api/\nDisallow: /admin\n');
+  });
+  // favicon 由前端提供，缺失时返回 204 而非 404，减少扫描噪音
+  app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return next();

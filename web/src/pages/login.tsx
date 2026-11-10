@@ -43,6 +43,8 @@ export default function LoginPage() {
   const gtRef = useRef<GeetestHandle>(null);
   const [gtPayload, setGtPayload] = useState<AnyCaptchaPayload | null>(null);
   const [gtConfigured, setGtConfigured] = useState(false);
+  // 发码时获取的人机验证通行证，登录提交时复用
+  const [captchaPass, setCaptchaPass] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sentOnce, setSentOnce] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -99,7 +101,11 @@ export default function LoginPage() {
     if (!/^\d{6}$/.test(code)) return toast.error('请输入 6 位验证码');
     setLoading(true);
     try {
-      const data = await api.post<{ user: User }>('/auth/login-code', { email: email.trim(), code });
+      const data = await api.post<{ user: User }>('/auth/login-code', {
+        email: email.trim(),
+        code,
+        ...(captchaPass ? { captcha_pass: captchaPass } : {}),
+      });
       finish(data.user);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '登录失败，请稍后重试');
@@ -112,7 +118,11 @@ export default function LoginPage() {
     if (!emailValid) return toast.error('请输入正确的邮箱地址');
     setSending(true);
     try {
-      await api.post('/auth/send-code', { email: email.trim(), purpose: 'login' });
+      const sent = await api.post<{ captchaPass?: string | null }>(
+        '/auth/send-code',
+        { email: email.trim(), purpose: 'login', ...(gtPayload || {}) },
+      );
+      if (sent?.captchaPass) setCaptchaPass(sent.captchaPass);
       setCountdown(60);
       setSentOnce(true);
       toast.success('验证码已发送', { description: '请查看你的邮箱（含垃圾箱），10 分钟内有效' });

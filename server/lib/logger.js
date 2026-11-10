@@ -132,9 +132,31 @@ function describe(req) {
 }
 
 /** 记录一条访问日志（敏感接口不记录请求体） */
+/**
+ * 高频只读接口：不写访问日志
+ *
+ * 问题：/api/auth/me 在每次页面加载、每次会话刷新都会被调用，
+ * 实测 24 小时内 3206 条日志里有 1139 条是它（35%）。
+ * 大量噪音会淹没真实的攻击记录，也让链式哈希存储快速膨胀。
+ *
+ * 处理：
+ *   · 成功响应（2xx/3xx）不记录
+ *   · 失败响应（4xx/5xx）仍然记录 —— 失败的 /auth/me 往往是
+ *     会话异常或探测行为，有审计价值
+ */
+const NOISY_PATHS = new Set([
+  '/api/auth/me',
+  '/api/health',
+  '/api/notifications/unread-count',
+  '/api/crypto/pubkey',
+  '/api/me/heartbeat',
+]);
+
 export function accessLog(req, res, startedAt) {
   const path = req.originalUrl.split('?')[0];
   if (path.startsWith('/uploads') || path.startsWith('/assets')) return;
+  // 高频只读接口成功时不记录，失败时保留（便于发现异常）
+  if (NOISY_PATHS.has(path) && res.statusCode < 400) return;
   const ua = parseUA(req.get('user-agent'));
   const entry = {
     id: 'log_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),

@@ -122,6 +122,8 @@ export default function ProfilePage() {
   const [emailCountdown, setEmailCountdown] = useState(0);
   const [emailGt, setEmailGt] = useState<AnyCaptchaPayload | null>(null);
   const [emailGtConfigured, setEmailGtConfigured] = useState(false);
+  // 更换邮箱的人机验证通行证（发码时获取，提交时复用）
+  const [emailCaptchaPass, setEmailCaptchaPass] = useState<string | null>(null);
   const [phoneValue, setPhoneValue] = useState('');
   const [phonePassword, setPhonePassword] = useState('');
   const [pwdOpen, setPwdOpen] = useState(false);
@@ -706,6 +708,7 @@ export default function ProfilePage() {
                   setEmailCode('');
                   setEmailPassword('');
                   setEmailGt(null);
+                  setEmailCaptchaPass(null);
                   setEmailOpen(true);
                 }}
               >
@@ -1461,11 +1464,12 @@ export default function ProfilePage() {
                     if (emailGtConfigured && !emailGt) return toast.error('请先完成人机验证');
                     setEmailSending(true);
                     try {
-                      await api.post('/auth/send-code', {
+                      const sent = await api.post<{ captchaPass?: string | null }>('/auth/send-code', {
                         email: emailNew.trim(),
                         purpose: 'email',
                         ...(emailGt || {}),
                       });
+                      if (sent?.captchaPass) setEmailCaptchaPass(sent.captchaPass);
                       toast.success('验证码已发送至新邮箱', {
                         description: '10 分钟内有效，请注意查收（含垃圾箱）',
                       });
@@ -1524,7 +1528,7 @@ export default function ProfilePage() {
                     code: emailCode,
                     password: await sha256Hex(emailPassword),
                     pwdAlg: 'sha256',
-                    ...(emailGt || {}),
+                    ...(emailCaptchaPass ? { captcha_pass: emailCaptchaPass } : emailGt || {}),
                   });
                   toast.success('绑定邮箱已更换', {
                     description: `新邮箱：${res.email}${res.sessionsRevoked ? `，已下线 ${res.sessionsRevoked} 个其他会话` : ''}`,
