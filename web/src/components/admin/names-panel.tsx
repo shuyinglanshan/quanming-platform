@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Eye, EyeOff, Loader2, MoreHorizontal, RefreshCw, Search, Sparkles, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2, MoreHorizontal, RefreshCw, Search, Sparkles, Trash2,
+  CheckCheck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -29,6 +32,8 @@ type Row = NameItem & { status: string; ownerEmail: string };
 export function NamesPanel({ onChanged }: { onChanged?: () => void }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('all');
+  // 批量选择
+  const [selected, setSelected] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: Row[]; total: number; pages: number } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,8 +125,117 @@ export function NamesPanel({ onChanged }: { onChanged?: () => void }) {
         </div>
       ) : data && data.items.length > 0 ? (
         <div className="space-y-2">
+          {/* 全选 + 批量操作 */}
+          {data.items.length > 0 && (
+            <div className="glass flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = data.items.map((n) => n.id);
+                  const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+                  setSelected(all ? [] : ids);
+                }}
+                className="flex items-center gap-2 text-[12px] text-slate-400 transition hover:text-white"
+              >
+                <Checkbox
+                  checked={data.items.length > 0 && data.items.every((n) => selected.includes(n.id))}
+                />
+                全选本页（{data.items.length} 条）
+              </button>
+
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {selected.length > 0 && (
+                  <span className="text-[11.5px] text-violet-200">已选 {selected.length} 条</span>
+                )}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7"
+                  disabled={acting || selected.length === 0}
+                  title="批量下架选中的圈名"
+                  onClick={async () => {
+                    setActing(true);
+                    try {
+                      const res = await api.post<{ done: number; skipped: number }>('/admin/names/batch-status', {
+                        ids: selected,
+                        status: 'hidden',
+                      });
+                      toast.success('批量下架完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                      setSelected([]);
+                      load();
+                      onChanged?.();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '操作失败');
+                    } finally {
+                      setActing(false);
+                    }
+                  }}
+                >
+                  <EyeOff className="size-3.5" /> 批量下架
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7"
+                  disabled={acting || selected.length === 0}
+                  title="批量恢复展示"
+                  onClick={async () => {
+                    setActing(true);
+                    try {
+                      const res = await api.post<{ done: number; skipped: number }>('/admin/names/batch-status', {
+                        ids: selected,
+                        status: 'active',
+                      });
+                      toast.success('批量恢复完成', { description: `成功 ${res.done} 条，跳过 ${res.skipped} 条` });
+                      setSelected([]);
+                      load();
+                      onChanged?.();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '操作失败');
+                    } finally {
+                      setActing(false);
+                    }
+                  }}
+                >
+                  <Eye className="size-3.5" /> 批量恢复
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7"
+                  disabled={acting || selected.length === 0}
+                  title="批量删除圈名（不可恢复）"
+                  onClick={async () => {
+                    if (!confirm(`确定删除选中的 ${selected.length} 个圈名吗？此操作不可恢复。`)) return;
+                    setActing(true);
+                    try {
+                      const res = await api.post<{ done: number }>('/admin/names/batch-delete', { ids: selected });
+                      toast.success(`已删除 ${res.done} 个圈名`);
+                      setSelected([]);
+                      load();
+                      onChanged?.();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '操作失败');
+                    } finally {
+                      setActing(false);
+                    }
+                  }}
+                >
+                  <CheckCheck className="size-3.5" /> 批量删除
+                </Button>
+              </div>
+            </div>
+          )}
+
           {data.items.map((n) => (
             <div key={n.id} className="glass-soft flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3">
+              <Checkbox
+                checked={selected.includes(n.id)}
+                onCheckedChange={(v) =>
+                  setSelected((prev) => (v ? [...prev, n.id] : prev.filter((id) => id !== n.id)))
+                }
+                className="shrink-0"
+              />
               <div
                 className="grid size-9 shrink-0 place-items-center rounded-xl border border-white/12 text-[13px] font-semibold text-white"
                 style={{

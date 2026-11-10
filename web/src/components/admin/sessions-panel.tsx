@@ -120,6 +120,10 @@ export function SessionsPanel() {
   }
 
   const items = data?.items || [];
+  // 可批量下线的会话：排除管理员、超级管理员，以及当前会话
+  const kickableCount = items.filter(
+    (i) => !i.current && i.role !== 'admin' && i.role !== 'superadmin',
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -146,6 +150,49 @@ export function SessionsPanel() {
               <div className="mt-0.5 text-[15px] font-semibold tabular-nums text-white">{i.v}</div>
             </div>
           ))}
+        </div>
+
+        {/* 批量操作：全部下线普通用户会话（保护管理员/超管） */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-rose-300/20 bg-rose-400/[0.06] px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11.5px] text-rose-200">批量下线</div>
+            <div className="mt-0.5 text-[10.5px] leading-relaxed text-slate-500">
+              会踢出所有<strong className="text-slate-300">普通用户与审核员</strong>的会话；
+              管理员与超级管理员的会话受保护，不会被批量下线。
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-8 shrink-0"
+            disabled={acting !== '' || kickableCount === 0}
+            title={kickableCount === 0 ? '没有可下线的普通用户会话' : `下线 ${kickableCount} 个普通用户会话`}
+            onClick={async () => {
+              if (!confirm(`确定要下线全部 ${kickableCount} 个普通用户会话吗？管理员与超级管理员不受影响。`)) return;
+              setActing('all');
+              try {
+                const res = await api.post<{ removed: number; skipped: number }>(
+                  '/admin/sessions/batch-kick',
+                  {},
+                );
+                toast.success(`已下线 ${res.removed} 个会话`, {
+                  description: res.skipped ? `${res.skipped} 个管理员会话已跳过` : '管理员会话未受影响',
+                });
+                load();
+              } catch (err) {
+                toast.error(err instanceof ApiError ? err.message : '操作失败');
+              } finally {
+                setActing('');
+              }
+            }}
+          >
+            {acting === 'all' ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <UserX className="size-3.5" />
+            )}
+            全部下线（普通用户）
+          </Button>
         </div>
 
         <p className="mt-3 flex items-start gap-1.5 text-[10.5px] leading-relaxed text-slate-500">
@@ -214,21 +261,6 @@ export function SessionsPanel() {
                       <LogOut className="size-3.5" />
                     )}
                     踢出
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-rose-300 hover:text-rose-200"
-                    disabled={acting !== ''}
-                    title="踢出该用户全部会话"
-                    onClick={() => kickUser(row)}
-                  >
-                    {acting === `u-${row.userId}` ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <UserX className="size-3.5" />
-                    )}
-                    全部下线
                   </Button>
                 </div>
               </div>

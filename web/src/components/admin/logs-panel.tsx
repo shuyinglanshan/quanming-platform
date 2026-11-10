@@ -10,8 +10,10 @@ import {
   ShieldCheck,
   Smartphone,
   Tablet,
+  Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +64,8 @@ export function LogsPanel() {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: LogRow[]; total: number; pages: number; counts: Record<string, number> } | null>(null);
+  // 批量选择（仅用于导出，不提供删除：日志是审计链，不可篡改）
+  const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [auto, setAuto] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -189,15 +193,96 @@ export function LogsPanel() {
           </div>
         ) : data && data.items.length > 0 ? (
           <div className="divide-y divide-white/[0.045]">
+            {/* 全选 + 批量导出
+                说明：访问日志是哈希链式审计记录，**不提供删除**，
+                否则会破坏完整性校验。批量操作只支持导出。 */}
+            {data.items.length > 0 && (
+              <div className="glass mb-2 flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ids = data.items.map((l) => l.id);
+                    const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+                    setSelected(all ? [] : ids);
+                  }}
+                  className="flex items-center gap-2 text-[12px] text-slate-400 transition hover:text-white"
+                >
+                  <Checkbox
+                    checked={data.items.length > 0 && data.items.every((l) => selected.includes(l.id))}
+                  />
+                  全选本页（{data.items.length} 条）
+                </button>
+
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  {selected.length > 0 && (
+                    <span className="text-[11.5px] text-violet-200">已选 {selected.length} 条</span>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7"
+                    disabled={selected.length === 0}
+                    title="把选中记录导出为 CSV"
+                    onClick={() => {
+                      const rows = data.items.filter((l) => selected.includes(l.id));
+                      const header = ['时间', '方法', '路径', '状态', '耗时(ms)', 'IP', '账号', '动作'];
+                      const csv = [
+                        header.join(','),
+                        ...rows.map((r) =>
+                          [
+                            new Date(r.ts).toISOString(),
+                            r.method,
+                            r.path,
+                            r.status,
+                            r.ms,
+                            r.ip || '',
+                            r.email || '',
+                            r.action || '',
+                          ]
+                            .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+                            .join(','),
+                        ),
+                      ].join('\n');
+                      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `access-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      toast.success(`已导出 ${rows.length} 条日志`);
+                    }}
+                  >
+                    <Download className="size-3.5" /> 导出选中
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {data.items.map((l) => {
               const bad = l.status >= 400 || l.level === 'error';
               return (
-                <button
+                <div
                   key={l.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => { setDetailId(l.id); setDetailOpen(true); }}
-                  className="grid w-full min-w-0 grid-cols-1 gap-1.5 px-3 py-2.5 text-left text-[12px] transition hover:bg-white/[0.05] focus-visible:bg-white/[0.06] focus-visible:outline-none sm:px-4 md:grid-cols-[130px_minmax(0,1fr)_150px_110px_80px] md:items-center md:gap-3"
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { setDetailId(l.id); setDetailOpen(true); } }}
+                  className="grid w-full min-w-0 cursor-pointer grid-cols-1 gap-1.5 px-3 py-2.5 text-left text-[12px] transition hover:bg-white/[0.05] focus-visible:bg-white/[0.06] focus-visible:outline-none sm:px-4 md:grid-cols-[24px_130px_minmax(0,1fr)_150px_110px_80px] md:items-center md:gap-3"
                 >
+                  {/* 复选框：阻止冒泡，避免点选时打开详情 */}
+                  <span
+                    className="hidden md:block"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <Checkbox
+                      checked={selected.includes(l.id)}
+                      onCheckedChange={(v) =>
+                        setSelected((prev) => (v ? [...prev, l.id] : prev.filter((id) => id !== l.id)))
+                      }
+                    />
+                  </span>
                   <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
                     <Activity className="size-3 text-slate-600 md:hidden" />
                     {formatDate(l.ts, true)}
@@ -261,7 +346,7 @@ export function LogsPanel() {
                     </span>
                     {l.ms > 0 && <span className="text-[10px] text-slate-600">{l.ms}ms</span>}
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

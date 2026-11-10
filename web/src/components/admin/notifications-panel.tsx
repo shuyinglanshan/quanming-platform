@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +48,8 @@ export function NotificationsPanel({ onChanged }: { onChanged?: () => void }) {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: Row[]; total: number; pages: number; counts: Record<string, number> } | null>(null);
+  // 批量选择
+  const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [compose, setCompose] = useState<'broadcast' | 'personal' | null>(null);
   const [delTarget, setDelTarget] = useState<Row | null>(null);
@@ -220,8 +223,65 @@ export function NotificationsPanel({ onChanged }: { onChanged?: () => void }) {
         </div>
       ) : data && data.items.length > 0 ? (
         <div className="space-y-2">
+          {/* 全选 + 批量删除 */}
+          {data.items.length > 0 && (
+            <div className="glass flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const ids = data.items.map((n) => n.id);
+                  const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+                  setSelected(all ? [] : ids);
+                }}
+                className="flex items-center gap-2 text-[12px] text-slate-400 transition hover:text-white"
+              >
+                <Checkbox
+                  checked={data.items.length > 0 && data.items.every((n) => selected.includes(n.id))}
+                />
+                全选本页（{data.items.length} 条）
+              </button>
+
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {selected.length > 0 && (
+                  <span className="text-[11.5px] text-violet-200">已选 {selected.length} 条</span>
+                )}
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7"
+                  disabled={acting || selected.length === 0}
+                  title="批量删除选中的通知"
+                  onClick={async () => {
+                    if (!confirm(`确定删除选中的 ${selected.length} 条通知吗？删除后用户将不再看到。`)) return;
+                    setActing(true);
+                    try {
+                      const res = await api.post<{ done: number }>('/admin/notifications/batch-delete', { ids: selected });
+                      toast.success(`已删除 ${res.done} 条通知`);
+                      setSelected([]);
+                      load();
+                      onChanged?.();
+                    } catch (err) {
+                      toast.error(err instanceof ApiError ? err.message : '删除失败');
+                    } finally {
+                      setActing(false);
+                    }
+                  }}
+                >
+                  <Trash2 className="size-3.5" /> 批量删除
+                </Button>
+              </div>
+            </div>
+          )}
+
           {data.items.map((n) => (
             <div key={n.id} className="glass-soft flex items-start gap-3 rounded-2xl p-4">
+              <Checkbox
+                checked={selected.includes(n.id)}
+                onCheckedChange={(v) =>
+                  setSelected((prev) => (v ? [...prev, n.id] : prev.filter((id) => id !== n.id)))
+                }
+                className="mt-0.5 shrink-0"
+              />
               <div
                 className={cn(
                   'mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border',

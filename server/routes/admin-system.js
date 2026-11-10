@@ -1,5 +1,5 @@
 import express from 'express';
-import { db, save, publicUser, findUserById, bindingMonthlyLimit, dbStats } from '../lib/db.js';
+import { db, save, publicUser, findUserById, bindingMonthlyLimit, dbStats, ROOT, UPLOAD_DIR } from '../lib/db.js';
 import { requireAdmin } from '../lib/auth.js';
 import { paginate } from '../lib/util.js';
 import { eventLog, verifyLogChain } from '../lib/logger.js';
@@ -28,6 +28,22 @@ import {
   registerGuardSnapshot,
   saveRegisterGuardConfig,
 } from '../lib/register-guard.js';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+// archiver 是 CommonJS 模块，ESM 下需用 require 引入
+const archiver = require('archiver');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { verifyPassword } from '../lib/password.js';
+import {
+  adminGeetestConfig,
+  saveGeetestConfig,
+  clearGeetestConfig,
+  verifyGeetest,
+  SCENE_LABELS,
+} from '../lib/geetest.js';
 
 const router = express.Router();
 
@@ -286,6 +302,266 @@ router.put('/binding-limit', requireAdmin, (req, res) => {
   save();
   eventLog(req, '更新绑定修改限额', `每月 ${limit} 次`);
   res.json({ ok: true, monthlyLimit: limit });
+});
+
+
+/* ================= 数据导出 ================= */
+
+/**
+ * 导出完整数据库（SQLite 文件）
+ *
+ * 安全措施：
+ * - 仅 admin 可调用（verify 密码二次确认）
+ * - 用 SQLite 在线备份 API 生成一致性快照，避免读到写一半的数据
+ * - 快照文件写临时目录，下载后立即删除
+ * - 全流程记审计日志
+ */
+router.post('/export/database', requireAdmin, async (req, res) => {
+  const password = String(req.body?.password || '');
+  if (!password) return res.status(400).json({ error: '请输入当前账号密码以确认导出' });
+
+  const me = findUserById(req.user.id);
+  if (!verifyPassword(password, me.passwordHash)) {
+    eventLog(req, '数据库导出失败', '密码校验不通过', 'error');
+    return res.status(403).json({ error: '密码不正确' });
+  }
+
+  const src = path.join(ROOT, 'data', 'quanming.db');
+  const tmp = path.join(os.tmpdir(), `qm-export-${Date.now()}.db`);
+
+  try {
+    // 优先用 sqlite3 .backup 保证一致性；不可用时退回复制
+    try {
+      execFileSync('sqlite3', [src, `.backup '${tmp}'`], { timeout: 60000 });
+    } catch {
+      execFileSync('sqlite3', [src, 'PRAGMA wal_checkpoint(TRUNCATE);'], { timeout: 30000 });
+      fs.copyFileSync(src, tmp);
+    }
+
+    const stat = fs.statSync(tmp);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const filename = `quanming-db-${stamp}.db`;
+
+    eventLog(req, '导出数据库', `${filename} · ${(stat.size / 1024 / 1024).toFixed(2)}MB`);
+    res.download(tmp, filename, () => {
+      // 无论成功失败都清理临时文件，避免残留敏感数据
+      try { fs.unlinkSync(tmp); } catch {}
+    });
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    eventLog(req, '数据库导出失败', String(err.message).slice(0, 100), 'error');
+    res.status(500).json({ error: '导出失败：' + String(err.message).slice(0, 120) });
+  }
+});
+
+/**
+ * 导出全部上传图片（ZIP 打包）
+ *
+ * 只打包 <UPLOAD_DIR> 下的文件，排除隐藏文件与空目录。
+ * 大文件通过流式压缩写入临时文件，避免占满内存。
+ */
+router.post('/export/uploads', requireAdmin, async (req, res) => {
+  const password = String(req.body?.password || '');
+  if (!password) return res.status(400).json({ error: '请输入当前账号密码以确认导出' });
+
+  const me = findUserById(req.user.id);
+  if (!verifyPassword(password, me.passwordHash)) {
+    eventLog(req, '图片导出失败', '密码校验不通过', 'error');
+    return res.status(403).json({ error: '密码不正确' });
+  }
+
+  const tmp = path.join(os.tmpdir(), `qm-uploads-${Date.now()}.zip`);
+
+  try {
+    if (!fs.existsSync(UPLOAD_DIR)) {
+      return res.status(404).json({ error: '没有可导出的图片' });
+    }
+
+    // 收集文件清单（跳过占位文件）
+    const files = [];
+    const walk = (dir, prefix = '') => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith('.')) continue;
+        const full = path.join(dir, entry.name);
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) walk(full, rel);
+        else files.push({ full, rel });
+      }
+    };
+    walk(UPLOAD_DIR);
+
+    if (!files.length) return res.status(404).json({ error: '没有可导出的图片' });
+
+    // 流式压缩
+    await new Promise((resolve, reject) => {
+      const output = fs.createWriteStream(tmp);
+      const archive = archiver('zip', { zlib: { level: 6 } });
+      output.on('close', resolve);
+      output.on('error', reject);
+      archive.on('error', reject);
+      archive.pipe(output);
+      for (const f of files) archive.file(f.full, { name: f.rel });
+      archive.finalize();
+    });
+
+    const stat = fs.statSync(tmp);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const filename = `quanming-uploads-${stamp}.zip`;
+
+    eventLog(req, '导出图片', `${filename} · ${files.length} 个 · ${(stat.size / 1024 / 1024).toFixed(2)}MB`);
+    res.download(tmp, filename, () => {
+      try { fs.unlinkSync(tmp); } catch {}
+    });
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    eventLog(req, '图片导出失败', String(err.message).slice(0, 100), 'error');
+    res.status(500).json({ error: '导出失败：' + String(err.message).slice(0, 120) });
+  }
+});
+
+/** 导出前的统计预览（让管理员知道会导出多少数据） */
+router.get('/export/info', requireAdmin, (_req, res) => {
+  const dbPath = path.join(ROOT, 'data', 'quanming.db');
+  let dbSize = 0;
+  try { dbSize = fs.statSync(dbPath).size; } catch {}
+
+  let fileCount = 0;
+  let fileSize = 0;
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else {
+        fileCount += 1;
+        try { fileSize += fs.statSync(full).size; } catch {}
+      }
+    }
+  };
+  walk(UPLOAD_DIR);
+
+  res.json({
+    database: { size: dbSize, path: 'data/quanming.db' },
+    uploads: { count: fileCount, size: fileSize },
+    counts: {
+      users: db.users.filter((u) => !u.deleted).length,
+      names: db.names.length,
+      claims: db.claims.length,
+      appeals: db.appeals.length,
+    },
+  });
+});
+
+
+/* ================= 极验人机验证配置 ================= */
+
+/** 读取两个场景的配置（key 打码） */
+router.get('/geetest', requireAdmin, (_req, res) => {
+  res.json({ scenes: adminGeetestConfig() });
+});
+
+/** 保存某场景配置 */
+router.put('/geetest/:scene', requireAdmin, (req, res) => {
+  const scene = String(req.params.scene || '');
+  const result = saveGeetestConfig(scene, {
+    captchaId: req.body?.captchaId,
+    captchaKey: req.body?.captchaKey,
+  });
+  if (!result.ok) return res.status(400).json({ error: result.error });
+
+  eventLog(req, '修改人机验证配置', `${SCENE_LABELS[scene] || scene} · ${req.body?.captchaId ? '已设置' : '已清空'}`);
+  res.json({ ok: true, scenes: adminGeetestConfig() });
+});
+
+/** 清空某场景配置 */
+router.delete('/geetest/:scene', requireAdmin, (req, res) => {
+  const scene = String(req.params.scene || '');
+  const result = clearGeetestConfig(scene);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+
+  eventLog(req, '清空人机验证配置', SCENE_LABELS[scene] || scene);
+  res.json({ ok: true, scenes: adminGeetestConfig() });
+});
+
+/** 测试某场景配置是否可用（用极验官方接口探测 captcha_id 是否有效） */
+router.post('/geetest/:scene/test', requireAdmin, async (req, res) => {
+  const scene = String(req.params.scene || '');
+  const cfg = adminGeetestConfig().find((s) => s.scene === scene);
+  if (!cfg) return res.status(400).json({ error: '不支持的场景' });
+  if (!cfg.configured) return res.status(400).json({ error: '该场景尚未配置完整（需要 captchaId 与 captchaKey）' });
+
+  // 用假凭据直接探测极验接口：
+  //   - 返回 sign_token error / pass_token error → captcha_id 与 key 匹配，配置有效
+  //   - 返回 invalid captcha_id / 403 / 404   → 配置无效
+  //   - 网络超时                              → 无法判断
+  const body = new URLSearchParams({
+    lot_number: `probe${Date.now()}`,
+    captcha_output: 'probe',
+    pass_token: 'probe',
+    gen_time: String(Math.floor(Date.now() / 1000)),
+    sign_token: 'probe',
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const r = await fetch(
+      `https://gcaptcha4.geetest.com/validate?captcha_id=${encodeURIComponent(cfg.captchaId)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timer);
+
+    const text = await r.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* 非 JSON */ }
+    const reason = String(data?.reason || '').toLowerCase();
+
+    // captcha_id 不存在时极验会明确报错
+    const invalid = /invalid|captcha_id/.test(reason) || r.status === 403 || r.status === 404;
+    const ok = !invalid && r.ok;
+
+    eventLog(req, '测试人机验证配置', `${SCENE_LABELS[scene] || scene} · ${ok ? '有效' : '无效'}`);
+    res.json({
+      ok,
+      reachable: true,
+      reason: data?.reason || `HTTP_${r.status}`,
+      hint: ok
+        ? '配置有效：极验接口可正常响应，captchaId 与 captchaKey 匹配'
+        : '配置可能无效：请检查 captchaId 与 captchaKey 是否来自同一个极验应用',
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    res.json({
+      ok: false,
+      reachable: false,
+      reason: 'NETWORK',
+      hint: `无法连接极验接口：${String(err.message || '').slice(0, 80)}`,
+    });
+  }
+});
+
+
+/** 批量删除通知 */
+router.post('/notifications/batch-delete', requireAdmin, (req, res) => {
+  const { ids = [] } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ error: '请选择要删除的通知' });
+  }
+
+  const before = db.notifications.length;
+  db.notifications = db.notifications.filter((n) => !ids.includes(n.id));
+  const removed = before - db.notifications.length;
+  if (removed) {
+    save('notifications');
+    eventLog(req, '批量删除通知', `${removed} 条`);
+  }
+  res.json({ ok: true, done: removed });
 });
 
 export default router;

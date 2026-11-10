@@ -974,4 +974,119 @@ router.post('/avatars/batch', requirePermission('users'), (req, res) => {
   res.json({ ok: true, done, skipped });
 });
 
+
+
+/* ================= 批量操作 ================= */
+
+/**
+ * 批量下架 / 恢复圈名
+ *
+ * 下架（hidden）会让圈名从广场与详情页消失，属于高危操作，
+ * 因此要求 names 权限，并逐条记录审计。
+ */
+router.post('/names/batch-status', requirePermission('names'), (req, res) => {
+  const { ids = [], status } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ error: '请选择要处理的圈名' });
+  }
+  if (!['active', 'hidden'].includes(status)) {
+    return res.status(400).json({ error: '未知状态' });
+  }
+
+  let done = 0;
+  let skipped = 0;
+  for (const id of ids) {
+    const n = db.names.find((x) => x.id === id);
+    if (!n) { skipped += 1; continue; }
+    if (n.status === status) { skipped += 1; continue; }
+    n.status = status;
+    done += 1;
+
+    // 通知归属者
+    if (n.ownerId) {
+      notifyUser(n.ownerId, {
+        category: 'system',
+        level: status === 'hidden' ? 'warning' : 'success',
+        title: status === 'hidden' ? `圈名「${n.name}」已被下架` : `圈名「${n.name}」已恢复展示`,
+        content: status === 'hidden'
+          ? '该圈名因违反社区规范已被管理员下架，如有疑问请联系管理员。'
+          : '该圈名已恢复在广场展示。',
+        link: `/names/${n.id}`,
+      });
+    }
+  }
+
+  save('names');
+  eventLog(
+    req,
+    status === 'hidden' ? '批量下架圈名' : '批量恢复圈名',
+    `成功 ${done} 条 / 跳过 ${skipped} 条`,
+  );
+  res.json({ ok: true, done, skipped });
+});
+
+/** 批量删除圈名（不可恢复，需二次确认） */
+router.post('/names/batch-delete', requirePermission('names'), (req, res) => {
+  const { ids = [] } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) {
+    return res.status(400).json({ error: '请选择要删除的圈名' });
+  }
+
+  let done = 0;
+  const names = [];
+  for (const id of ids) {
+    const n = db.names.find((x) => x.id === id);
+    if (!n) continue;
+    names.push(n.name);
+    done += 1;
+  }
+  if (!done) return res.json({ ok: true, done: 0 });
+
+  db.names = db.names.filter((x) => !ids.includes(x.id));
+  save('names');
+  eventLog(req, '批量删除圈名', `${done} 条：${names.slice(0, 5).join('、')}${names.length > 5 ? '…' : ''}`);
+  res.json({ ok: true, done });
+});
+
+/**
+ * 批量下线普通用户会话
+ *
+ * 安全设计：**管理员与超级管理员的会话永不批量下线**。
+ * 原因：批量下线是高危操作，若把管理员也踢掉，
+ *      一旦管理员误触或账号被盗用，会直接导致平台失去管控能力。
+ *      （管理员如需下线，可在列表里单独操作，且有防越权校验）
+ *
+ * 当前会话也保留，避免操作者把自己踢出去。
+ */
+router.post('/sessions/batch-kick', requirePermission('users'), (req, res) => {
+  const me = sessionToken(req);
+
+  // 只处理「普通用户 / 审核员」角色，且不是当前会话
+  const targets = db.sessions.filter((s) => {
+    if (s.token === me) return false;
+    const u = findUserById(s.userId);
+    if (!u) return false;
+    if (u.role === 'admin' || u.role === 'superadmin') return false;
+    return true;
+  });
+
+  if (!targets.length) {
+    return res.json({ ok: true, removed: 0, skipped: 0 });
+  }
+
+  const tokens = new Set(targets.map((s) => s.token));
+  // 统计被跳过的管理员会话数（仅用于前端提示）
+  const skipped = db.sessions.filter((s) => {
+    if (s.token === me) return false;
+    const u = findUserById(s.userId);
+    return u && (u.role === 'admin' || u.role === 'superadmin');
+  }).length;
+
+  db.sessions = db.sessions.filter((s) => !tokens.has(s.token));
+  save('sessions');
+
+  eventLog(req, '批量下线会话', `下线 ${targets.length} 个普通用户会话，跳过 ${skipped} 个管理员会话`);
+  res.json({ ok: true, removed: targets.length, skipped });
+});
+
 export default router;
