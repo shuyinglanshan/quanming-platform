@@ -31,12 +31,11 @@ type Challenge = {
   cols: number;
   rows: number;
   expiresAt: number;
-  /** 图标数组：'target' 表示特殊图标，其余为干扰项 */
-  icons: string[];
+  /** 服务端渲染好的验证图（base64 SVG），不含任何可推断目标的元数据 */
+  image: string;
+  width: number;
+  height: number;
 };
-
-/** 干扰图标：用不同 emoji 增加辨识难度 */
-const DECOY_ICONS = ['◆', '●', '▲', '■', '★', '✚', '❖', '◈', '✦', '⬟', '⬢', '◉'];
 
 export function ClickCaptcha({
   onPayload,
@@ -122,38 +121,25 @@ export function ClickCaptcha({
 
       <div className="rounded-xl border border-white/12 bg-white/[0.04] p-2">
         <p className="mb-1.5 px-1 text-[11px] text-slate-400">
-          请点击下方的 <Star className="inline size-3 text-amber-300" fill="currentColor" /> 图标
+          请点击图中的 <Star className="inline size-3 text-amber-300" fill="currentColor" /> 形状
         </p>
         <div
           ref={gridRef}
           onMouseEnter={() => (startRef.current = Date.now())}
           onClick={onClick}
           className={cn(
-            'grid cursor-crosshair gap-1.5 rounded-lg p-1 transition',
-            passed && 'pointer-events-none',
+            'relative w-full cursor-crosshair overflow-hidden rounded-lg transition',
+            passed && 'pointer-events-none opacity-80',
           )}
-          style={{ gridTemplateColumns: `repeat(${challenge?.cols || 4}, minmax(0, 1fr))` }}
         >
-          {(challenge?.icons || []).map((icon, i) => {
-            const isTarget = icon === 'target';
-            return (
-              <div
-                key={i}
-                className={cn(
-                  'grid h-10 place-items-center rounded-md border text-[15px] transition select-none',
-                  passed && isTarget
-                    ? 'border-emerald-300/50 bg-emerald-400/15 text-emerald-200'
-                    : 'border-white/8 bg-white/[0.03] text-slate-500 hover:border-violet-300/30',
-                )}
-              >
-                {isTarget ? (
-                  <Star className={cn('size-4', passed ? 'text-emerald-300' : 'text-amber-300')} fill="currentColor" />
-                ) : (
-                  DECOY_ICONS[i % DECOY_ICONS.length]
-                )}
-              </div>
-            );
-          })}
+          {challenge?.image ? (
+            <img
+              src={challenge.image}
+              alt="人机验证"
+              className="block h-auto w-full select-none"
+              draggable={false}
+            />
+          ) : null}
         </div>
       </div>
 

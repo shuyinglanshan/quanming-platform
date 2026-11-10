@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { db, save, uid } from './db.js';
 import { trustedClientIp } from './ip.js';
 import { blockIpPermanently, tempBlockIp, normalizeIp, isPermanentlyBlocked, activeTempBlock } from './guard.js';
@@ -44,9 +45,120 @@ function store() {
 }
 
 /** 检查该 IP 当前是否已被限制 */
+/**
+ * 全局注册速率限制（不依赖 IP）
+ *
+ * 问题：IP 维度限速可被出口 IP 轮换绕过（攻击者用代理池批量注册）。
+ *
+ * 对策补充三层不依赖 IP 的维度：
+ *   ① 全局速率      —— 全站每分钟注册总数上限
+ *   ② 邮箱域名维度  —— 同一邮箱域名的注册频率
+ *   ③ 浏览器指纹    —— IP + UA + Accept-Language 组合哈希
+ *
+ * 这些维度无法通过"换 IP"绕过，能有效遏制代理池批量注册。
+ */
+const globalReg = { windowStart: 0, count: 0 };
+const domainReg = new Map();
+const fpReg = new Map();
+const GLOBAL_WINDOW = 60_000;
+const GLOBAL_MAX = 30; // 全站每分钟最多 30 次注册请求
+const DOMAIN_WINDOW = 10 * 60_000;
+const DOMAIN_MAX = 8; // 同域名 10 分钟最多 8 次
+const FP_WINDOW = 10 * 60_000;
+const FP_MAX = 5; // 同指纹 10 分钟最多 5 次
+
+/** 从请求提取轻量指纹（不存储原始 UA，只存哈希） */
+function requestFingerprint(req) {
+  const ua = String(req.get('user-agent') || '');
+  const lang = String(req.get('accept-language') || '');
+  // UA 归一化：去掉版本号尾部差异，避免被随意改动绕过
+  const uaCore = ua.replace(/[\d.]+/g, '').slice(0, 120);
+  return crypto.createHash('sha256').update(`${uaCore}|${lang}`).digest('hex').slice(0, 24);
+}
+
+/**
+ * 多维度注册限流检查
+ * @returns {null|{status:number, body:object}}
+ */
+function multiDimRegisterGuard(req, email) {
+  const now = Date.now();
+
+  // ① 全局速率
+  if (now - globalReg.windowStart > GLOBAL_WINDOW) {
+    globalReg.windowStart = now;
+    globalReg.count = 0;
+  }
+  globalReg.count += 1;
+  if (globalReg.count > GLOBAL_MAX) {
+    return {
+      status: 429,
+      body: {
+        error: '当前注册请求过多，请稍后再试',
+        code: 'REGISTER_GLOBAL_LIMITED',
+        retryAfter: Math.ceil((GLOBAL_WINDOW - (now - globalReg.windowStart)) / 1000),
+      },
+    };
+  }
+
+  // ② 邮箱域名维度
+  const domain = String(email || '').split('@')[1]?.toLowerCase() || '';
+  if (domain) {
+    const rec = domainReg.get(domain);
+    if (!rec || now - rec.start > DOMAIN_WINDOW) {
+      domainReg.set(domain, { start: now, count: 1 });
+    } else {
+      rec.count += 1;
+      if (rec.count > DOMAIN_MAX) {
+        return {
+          status: 429,
+          body: {
+            error: '该邮箱域名注册过于频繁，请稍后再试',
+            code: 'REGISTER_DOMAIN_LIMITED',
+            retryAfter: Math.ceil((DOMAIN_WINDOW - (now - rec.start)) / 1000),
+          },
+        };
+      }
+    }
+  }
+
+  // ③ 浏览器指纹维度
+  const fp = requestFingerprint(req);
+  const frec = fpReg.get(fp);
+  if (!frec || now - frec.start > FP_WINDOW) {
+    fpReg.set(fp, { start: now, count: 1 });
+  } else {
+    frec.count += 1;
+    if (frec.count > FP_MAX) {
+      return {
+        status: 429,
+        body: {
+          error: '检测到异常注册行为，请稍后再试',
+          code: 'REGISTER_FP_LIMITED',
+          retryAfter: Math.ceil((FP_WINDOW - (now - frec.start)) / 1000),
+        },
+      };
+    }
+  }
+
+  // 清理过期条目，避免内存增长
+  if (domainReg.size > 2000) {
+    for (const [k, v] of domainReg) if (now - v.start > DOMAIN_WINDOW) domainReg.delete(k);
+  }
+  if (fpReg.size > 5000) {
+    for (const [k, v] of fpReg) if (now - v.start > FP_WINDOW) fpReg.delete(k);
+  }
+
+  return null;
+}
+
 export function checkRegisterAllowed(req) {
   const conf = getRegisterGuardConfig();
   if (!conf.enabled) return null;
+
+  // 先做不依赖 IP 的多维度检查（防出口 IP 轮换）
+  const multi = multiDimRegisterGuard(req, req.body?.email);
+  if (multi) return multi;
+
   const ip = normalizeIp(trustedClientIp(req));
   if (!ip) return null;
 

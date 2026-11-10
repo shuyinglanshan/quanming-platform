@@ -307,14 +307,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   get: <T>(path: string, init?: RequestInit) => request<T>(path, init),
+  /**
+   * POST：始终发送加密信封
+   *
+   * 注意 body ?? {} ：即使调用方不传 body，也必须发送空对象，
+   * 否则 request() 会跳过加密分支，服务端返回
+   * 400 ENCRYPTION_REQUIRED（表现为「提示需要加密请求」）。
+   */
   post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'POST', body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
+    request<T>(path, {
+      method: 'POST',
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+    }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }),
   put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
+  /**
+   * DELETE 也必须有请求体
+   *
+   * 服务端强制所有写方法（含 DELETE）走加密信封，
+   * 而「不传 body」会导致 request() 跳过加密分支，
+   * 服务端收到明文请求后返回 400 ENCRYPTION_REQUIRED
+   * —— 这正是「删除用户提示需要加密请求」的原因。
+   *
+   * 这里统一发送空对象 {}，保证始终进入加密流程。
+   */
   del: <T>(path: string, body?: unknown) =>
     request<T>(path, {
       method: 'DELETE',
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      body: JSON.stringify(body ?? {}),
     }),
 };
 

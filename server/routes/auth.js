@@ -112,13 +112,27 @@ router.get('/click-challenge', (_req, res) => {
 });
 
 /* ---------------- 邮箱后缀识别 ---------------- */
+/**
+ * 邮箱格式检查
+ *
+ * 安全修正（防账号枚举）：
+ *   旧实现返回 registered: true/false，任何人可拿字典批量探测
+ *   某邮箱是否已注册。现在只返回格式校验结果，
+ *   **不透露注册状态**。
+ *
+ *   用户在注册/登录时会得到统一的模糊提示，
+ *   真正需要确认时通过邮箱验证码流程完成。
+ */
 router.get('/email-check', (req, res) => {
   const info = parseEmail(req.query.email);
-  if (!info.valid) {
-    return res.json({ ...info, registered: false });
-  }
-  const user = findUserByEmail(info.email);
-  res.json({ ...info, registered: Boolean(user) });
+  // 只返回格式相关字段，剔除任何与注册状态有关的信息
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    valid: info.valid,
+    label: info.label,
+    domain: info.domain || '',
+    provider: info.provider || '',
+  });
 });
 
 /* ---------------- 可用性检查（手机号 / 用户名） ---------------- */
@@ -183,8 +197,19 @@ router.post('/send-code', async (req, res) => {
   const info = { valid: true, domain: parsed.domain, provider: parsed.provider };
 
   const existing = findUserByEmail(email);
-  if (purpose === 'register' && existing) return res.status(409).json({ error: '该邮箱已注册，请直接登录' });
-  if (purpose === 'login' && !existing) return res.status(404).json({ error: '该邮箱尚未注册，请先注册账号' });
+
+  /**
+   * 安全修正（防账号枚举）：
+   *   旧实现按 purpose 返回「该邮箱已注册 / 尚未注册」，
+   *   攻击者可据此判断任意邮箱的注册状态。
+   *
+   *   现在统一处理：无论邮箱是否存在，都返回**相同的成功响应**，
+   *   但只在邮箱确实需要时才真正发送邮件。
+   *   这样响应完全一致，无法用于枚举。
+   *
+   *   例外：更换邮箱（purpose=email）必须明确告知占用情况，
+   *   因为这是已登录用户的操作，且已通过密码 + 人机验证。
+   */
   if (purpose === 'email') {
     // 更换绑定邮箱：必须已登录，且新邮箱不能被他人占用
     if (!req.user) return res.status(401).json({ error: '请先登录', code: 'NOT_AUTHENTICATED' });
@@ -222,6 +247,31 @@ router.post('/send-code', async (req, res) => {
   }
   const hourCount = mine.filter((c) => now - c.createdAt < 3600_000).length;
   if (hourCount >= MAX_PER_HOUR) return res.status(429).json({ error: '该邮箱验证码发送次数过多，请稍后再试' });
+
+  /**
+   * 枚举防护：注册场景下邮箱已存在、登录场景下邮箱不存在时，
+   * **不真正发信**，但返回与成功完全一致的响应。
+   *
+   * 这样攻击者无法通过响应差异判断账号是否存在；
+   * 真实用户如果填错场景，会在后续步骤看到提示（此时已通过验证码门槛）。
+   */
+  const needSend =
+    purpose === 'register'
+      ? !existing
+      : purpose === 'login'
+        ? Boolean(existing)
+        : true;
+
+  if (!needSend) {
+    eventLog(req, '验证码请求（未发信）', `${email} · ${purpose}`, 'info');
+    return res.json({
+      ok: true,
+      expiresIn: CODE_TTL / 1000,
+      resendAfter: RESEND_GAP / 1000,
+      message: '若该邮箱符合条件，验证码将发送至你的邮箱',
+      captchaPass: captcha.pass || null,
+    });
+  }
 
   const code = String(crypto.randomInt(100000, 999999));
   const record = {
@@ -378,11 +428,11 @@ router.post('/register', async (req, res) => {
   // email 会被规范化为「QQ号@qq.com」，用 let
   let { email, username, code, password, nickname } = req.body || {};
 
-  // 1) 限流 + 滑块预检（不消费，允许修正表单后重试）
+  // 1) 限流 + 人机验证
   const guard = await precheckRegister(req);
   if (!guard.ok) return res.status(guard.status).json(guard.body);
 
-  // 客户端可能传来 SHA-256 摘要（64 位 hex），此时强度由前端保证，服务端只做格式校验
+  // 2) 密码强度
   const clientHashed = isSha256Hex(password);
   const pwdError = clientHashed ? null : validatePassword(password);
   if (pwdError) {
@@ -390,25 +440,17 @@ router.post('/register', async (req, res) => {
     return res.status(blocked?.status || 400).json(blocked?.body || { error: pwdError });
   }
 
-  const nameError = validateUsername(username);
-  if (nameError) {
-    const blocked = afterRegisterFailure(req, '用户名不合法');
-    return res.status(blocked?.status || 400).json(blocked?.body || { error: nameError });
-  }
-  if (findUserByUsername(username)) {
-    const blocked = afterRegisterFailure(req, '用户名重复');
-    return res.status(blocked?.status || 409).json(blocked?.body || { error: '该用户名已被使用，请换一个' });
-  }
-
-  // 清洗昵称，避免 HTML/脚本注入
-  const nick = sanitizeText(nickname, 16) || String(username).trim();
-  const nickError = validateNickname(nick);
-  if (nickError) {
-    const blocked = afterRegisterFailure(req, '昵称不合法');
-    return res.status(blocked?.status || 400).json(blocked?.body || { error: nickError });
-  }
-
-  // 2) 账号标识校验：仅支持邮箱注册（已移除手机号）
+  /**
+   * 3) **先校验邮箱凭证**（格式 + 验证码），再做用户名/昵称校验
+   *
+   * 安全修正（防用户名枚举 oracle）：
+   *   旧顺序先查用户名是否重复，攻击者不需要邮箱验证码
+   *   就能批量探测「某用户名是否已注册」——典型的免凭证枚举。
+   *
+   *   现在把需要凭证的邮箱验证码校验提到最前：
+   *   攻击者必须先拥有该邮箱的控制权（收到验证码）才能进入
+   *   用户名校验分支，枚举成本提升到"需要大量真实邮箱"。
+   */
   let emailInfo = null;
   const normalizedPhone = '';
   {
@@ -421,10 +463,7 @@ router.post('/register', async (req, res) => {
     }
     email = parsed.email;
     emailInfo = { valid: true, domain: parsed.domain, provider: parsed.provider };
-    if (findUserByEmail(email)) {
-      const blocked = afterRegisterFailure(req, '邮箱已注册');
-      return res.status(blocked?.status || 409).json(blocked?.body || { error: '该邮箱已注册，请直接登录' });
-    }
+
     if (!/^\d{6}$/.test(String(code || ''))) {
       const blocked = afterRegisterFailure(req, '验证码格式错误');
       return res.status(blocked?.status || 400).json(blocked?.body || { error: '请输入 6 位数字验证码' });
@@ -436,7 +475,31 @@ router.post('/register', async (req, res) => {
     }
   }
 
-  // 4) 创建账号
+  // 4) 凭证校验通过后，才检查邮箱是否已注册（此时已证明邮箱归属）
+  if (findUserByEmail(email)) {
+    const blocked = afterRegisterFailure(req, '邮箱已注册');
+    return res.status(blocked?.status || 409).json(blocked?.body || { error: '该邮箱已注册，请直接登录' });
+  }
+
+  // 5) 用户名 / 昵称校验（需要凭证才能到达，不再构成枚举 oracle）
+  const nameError = validateUsername(username);
+  if (nameError) {
+    const blocked = afterRegisterFailure(req, '用户名不合法');
+    return res.status(blocked?.status || 400).json(blocked?.body || { error: nameError });
+  }
+  if (findUserByUsername(username)) {
+    const blocked = afterRegisterFailure(req, '用户名重复');
+    return res.status(blocked?.status || 409).json(blocked?.body || { error: '该用户名已被使用，请换一个' });
+  }
+
+  const nick = sanitizeText(nickname, 16) || String(username).trim();
+  const nickError = validateNickname(nick);
+  if (nickError) {
+    const blocked = afterRegisterFailure(req, '昵称不合法');
+    return res.status(blocked?.status || 400).json(blocked?.body || { error: nickError });
+  }
+
+  // 6) 创建账号
   const now = new Date().toISOString();
   const user = {
     id: uid('u_'),
@@ -461,7 +524,6 @@ router.post('/register', async (req, res) => {
   db.users.push(user);
   save();
 
-  // 记录成功尝试：频率窗口继续累计，仅清空失败计数
   recordRegisterAttempt(req, 'success', { success: true });
   resetRegisterAttempts(req);
 
@@ -558,7 +620,16 @@ router.post('/login-code', (req, res) => {
   if (!parsed.valid) return res.status(400).json({ error: parsed.label });
   email = parsed.email;
   const user = findUserByEmail(email);
-  if (!user) return res.status(404).json({ error: '该邮箱尚未注册，请先注册账号' });
+  if (!user) {
+    /**
+     * 安全修正（防账号枚举）：
+     *   旧实现返回 404「该邮箱尚未注册」，攻击者可用此区分
+     *   邮箱是否已注册。现在统一返回「邮箱或验证码不正确」，
+     *   与验证码错误的响应完全一致，无法据此判断账号存在性。
+     */
+    eventLog(req, '验证码登录失败', `${email} · 账号或验证码不匹配`, 'error');
+    return res.status(400).json({ error: '邮箱或验证码不正确，请检查后重试' });
+  }
   if (user.status === 'banned') return res.status(403).json({ error: '账号已被封禁，如有疑问请加入交流群联系管理员' });
 
   if (!/^\d{6}$/.test(String(code || ''))) return res.status(400).json({ error: '请输入 6 位数字验证码' });

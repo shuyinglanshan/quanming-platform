@@ -89,6 +89,16 @@ function transporterFor(conf) {
     pool: true,
     maxConnections: 2,
     connectionTimeout: 12000,
+    /**
+     * 安全修正（防信息泄露）：
+     *   默认 nodemailer 会在邮件头写入 X-Mailer、Message-ID（含本地主机名/出口 IP），
+     *   以及发信账号的原始地址。攻击者可从邮件源查到运营方真实邮箱与服务器信息。
+     *
+     *   这里关闭客户端标识注入，并设置通用 name。
+     */
+    name: 'localhost.localdomain',
+    // 不发送 X-Mailer
+    xMailer: false,
   });
   cache = { key, transporter };
   return transporter;
@@ -133,6 +143,21 @@ export async function sendCodeMail(email, code, purpose = 'register') {
     subject,
     html,
     text: `你的${action}验证码是 ${code}，10 分钟内有效。`,
+    /**
+     * 安全修正（防信息泄露）：
+     *   · 移除 X-Mailer（默认会暴露 nodemailer 版本）
+     *   · 移除 X-Priority / X-MSMail-Priority 等客户端指纹
+     *   · Message-ID 由 nodemailer 生成时会把本地主机名写入域名部分，
+     *     这里显式指定一个中性域名
+     *   · 不设置 Reply-To（否则会暴露运营方真实邮箱）
+     */
+    headers: {
+      'X-Mailer': '',
+      'X-Priority': '',
+      'X-MSMail-Priority': '',
+    },
+    // 中性 Message-ID 域名，避免泄露服务器主机名/出口 IP
+    messageId: `<${Date.now()}.${Math.random().toString(36).slice(2)}@mail.example.invalid>`,
   });
   return { from: conf.fromEmail || conf.user };
 }
@@ -155,6 +180,12 @@ export async function sendTestMail(to) {
     subject: renderTemplate(conf.subject, vars).replace(/&amp;/g, '&'),
     html: renderTemplate(conf.template, vars),
     text: `这是一封来自小天才圈名平台的配置测试邮件，验证码示例：${code}`,
+    headers: {
+      'X-Mailer': '',
+      'X-Priority': '',
+      'X-MSMail-Priority': '',
+    },
+    messageId: `<${Date.now()}.${Math.random().toString(36).slice(2)}@mail.example.invalid>`,
   });
   return { message: `测试邮件已发送至 ${to}` };
 }
@@ -166,7 +197,8 @@ export async function verifyMailer() {
   }
   try {
     await transporterFor(conf).verify();
-    return { ok: true, user: conf.user };
+    // 安全修正：不回传发信账号原文（避免后台泄露运营方 QQ 号）
+    return { ok: true, user: maskAccount(conf.user) };
   } catch (err) {
     console.error('[mail] SMTP 连接校验失败:', err.message);
     return { ok: false, error: err.message };
@@ -200,4 +232,13 @@ export function saveMailConfig(input = {}) {
 /** 当前是否已具备真实发信能力 */
 export function isMailConfigured() {
   return getMailConfig().configured;
+}
+
+
+/** 对账号做脱敏：abcd@qq.com → a***@qq.com */
+function maskAccount(account) {
+  const v = String(account || '');
+  const at = v.indexOf('@');
+  if (at <= 1) return v ? v.slice(0, 1) + '***' : '';
+  return `${v.slice(0, 1)}***${v.slice(at)}`;
 }

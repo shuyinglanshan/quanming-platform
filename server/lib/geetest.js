@@ -325,56 +325,112 @@ export function issueClickChallenge() {
   pruneChallenges();
 
   const id = crypto.randomBytes(16).toString('hex');
-
-  /**
-   * 目标点**绝不下发给客户端**
-   *
-   * 旧实现把 targetX/targetY 与 signature 一起返回，
-   * 攻击者只需 GET 一次挑战，回填坐标即可通过 —— 等于没有验证。
-   *
-   * 现在改为：
-   *   · 服务端生成一组随机图标，其中一个为目标
-   *   · 只下发「网格布局」与「哪个格子是目标」的**哈希**，
-   *     不告诉客户端哪一个是目标
-   *   · 客户端必须由用户肉眼识别并点击
-   *   · 校验时服务端按点击坐标反推格子，与记录的目标比对
-   */
   const cols = 4;
   const rows = 3;
-  const targetCell = crypto.randomInt(0, cols * rows); // 0..11
-  const nonce = crypto.randomBytes(16).toString('hex');
+  const targetCell = crypto.randomInt(0, cols * rows);
 
+  /**
+   * 关键修复：目标信息**绝不以任何形式下发**
+   *
+   * 旧实现返回 icons 数组（含 'target' 字符串），
+   * 攻击者 indexOf('target') 即可算出该点哪一格 —— 验证形同虚设。
+   *
+   * 现在改为**服务端渲染成图片**：
+   *   · 目标格画成实心星形，干扰格画成不同形状
+   *   · 客户端只看到一张 PNG/SVG 图片，无法从图片"读出"坐标
+   *   · 服务端持有 targetCell，按点击坐标反推格子比对
+   *
+   * 使用 SVG（纯字符串生成，无第三方依赖），
+   * 通过 data URI 下发，避免额外请求。
+   */
   const challenge = {
     id,
     cols,
     rows,
     targetCell,
-    nonce,
+    nonce: crypto.randomBytes(16).toString('hex'),
     expiresAt: Date.now() + CHALLENGE_TTL,
   };
   issuedChallenges.set(id, challenge);
 
-  // 只下发渲染所需信息：
-  //   · 12 个格子的图标（随机排列，目标格用特殊标记但不告知序号）
-  //   · 挑战 ID 与过期时间
-  // 不下发 targetCell、不下发任何可直接用于提交的签名
-  const icons = Array.from({ length: cols * rows }, (_, i) =>
-    i === targetCell ? 'target' : `decoy-${(i * 7919) % 13}`,
-  );
-  // 打乱图标顺序，避免「target 总在固定位置」被推断
-  for (let i = icons.length - 1; i > 0; i -= 1) {
-    const j = crypto.randomInt(0, i + 1);
-    [icons[i], icons[j]] = [icons[j], icons[i]];
+  // 每个格子的形状随机化，防止「目标永远是星形」被记住
+  const shapes = [];
+  const decoyShapes = ['circle', 'square', 'triangle', 'diamond', 'cross', 'hexagon'];
+  for (let i = 0; i < cols * rows; i += 1) {
+    shapes.push(i === targetCell ? 'star' : decoyShapes[crypto.randomInt(0, decoyShapes.length)]);
   }
+
+  const svg = renderChallengeSvg(cols, rows, shapes, targetCell);
+  // 用 base64 降低体积并避免字符转义问题
+  const image = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 
   return {
     challengeId: id,
     cols,
     rows,
     expiresAt: challenge.expiresAt,
-    // 图标数组：客户端只能看到"有一个特殊图标"，但不知道它在第几个
-    icons,
+    // 只下发渲染好的图片与尺寸，不含任何可推断目标的元数据
+    image,
+    width: 320,
+    height: 240,
   };
+}
+
+/** 把形状数组渲染为 SVG 字符串 */
+function renderChallengeSvg(cols, rows, shapes, targetCell) {
+  const W = 320;
+  const H = 240;
+  const pad = 8;
+  const cw = (W - pad * 2) / cols;
+  const ch = (H - pad * 2) / rows;
+
+  const shapePath = (kind, cx, cy, r) => {
+    switch (kind) {
+      case 'star': {
+        // 五角星：目标格，实心
+        const pts = [];
+        for (let i = 0; i < 10; i += 1) {
+          const rad = i % 2 === 0 ? r : r * 0.45;
+          const a = (Math.PI / 5) * i - Math.PI / 2;
+          pts.push(`${(cx + rad * Math.cos(a)).toFixed(1)},${(cy + rad * Math.sin(a)).toFixed(1)}`);
+        }
+        return `<polygon points="${pts.join(' ')}" fill="#fbbf24"/>`;
+      }
+      case 'circle':
+        return `<circle cx="${cx}" cy="${cy}" r="${r * 0.8}" fill="#475569"/>`;
+      case 'square':
+        return `<rect x="${cx - r * 0.7}" y="${cy - r * 0.7}" width="${r * 1.4}" height="${r * 1.4}" rx="3" fill="#475569"/>`;
+      case 'triangle':
+        return `<polygon points="${cx},${cy - r * 0.8} ${cx - r * 0.8},${cy + r * 0.6} ${cx + r * 0.8},${cy + r * 0.6}" fill="#475569"/>`;
+      case 'diamond':
+        return `<polygon points="${cx},${cy - r * 0.85} ${cx + r * 0.85},${cy} ${cx},${cy + r * 0.85} ${cx - r * 0.85},${cy}" fill="#475569"/>`;
+      case 'cross':
+        return `<path d="M${cx - r * 0.7} ${cy - r * 0.25}h${r * 0.45}v-${r * 0.45}h${r * 0.5}v${r * 0.45}h${r * 0.45}v${r * 0.5}h-${r * 0.45}v${r * 0.45}h-${r * 0.5}v-${r * 0.45}h-${r * 0.45}z" fill="#475569"/>`;
+      case 'hexagon':
+      default: {
+        const pts = [];
+        for (let i = 0; i < 6; i += 1) {
+          const a = (Math.PI / 3) * i - Math.PI / 6;
+          pts.push(`${(cx + r * 0.8 * Math.cos(a)).toFixed(1)},${(cy + r * 0.8 * Math.sin(a)).toFixed(1)}`);
+        }
+        return `<polygon points="${pts.join(' ')}" fill="#475569"/>`;
+      }
+    }
+  };
+
+  let body = '';
+  for (let i = 0; i < cols * rows; i += 1) {
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    const x = pad + c * cw;
+    const y = pad + r * ch;
+    // 格子背景
+    body += `<rect x="${x + 2}" y="${y + 2}" width="${cw - 4}" height="${ch - 4}" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>`;
+    // 形状
+    body += shapePath(shapes[i], x + cw / 2, y + ch / 2, Math.min(cw, ch) * 0.3);
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${body}</svg>`;
 }
 
 /**

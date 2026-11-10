@@ -367,3 +367,25 @@ export function getSessionId(): string {
     return '';
   }
 }
+
+/**
+ * 生成可直接发送的加密信封
+ *
+ * 供「需要自行控制 fetch（如文件下载）」的调用方使用，
+ * 保证这些请求同样满足服务端的强制加密要求。
+ *
+ * @param path 完整 API 路径（含 /api 前缀）
+ * @param payload 业务数据
+ * @param method HTTP 方法
+ */
+export async function encryptForRequest(
+  path: string,
+  payload: Record<string, unknown>,
+  method = 'POST',
+): Promise<{ enc: Record<string, string | number> }> {
+  const { aesKey, header } = await newSessionKey();
+  const enc = await encryptWithSession(aesKey, payload, path, method);
+  return {
+    enc: { v: 2, kid: currentKid(), key: header, ...enc } as Record<string, string | number>,
+  };
+}
