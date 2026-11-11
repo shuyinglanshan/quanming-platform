@@ -49,16 +49,43 @@ export default defineConfig({
          *   · vendor 可长期缓存，发版只重下小的业务包
          *   · 并行下载，首屏更快
          */
-        // rolldown（Vite 8）只支持函数形式的 manualChunks
+        /**
+         * 手动分包（rolldown 只支持函数形式）
+         *
+         * 关键：把 radix 按组件拆开，而不是全塞进一个 ui-vendor。
+         *
+         * 原因：首屏的 button 组件只用到 @radix-ui/react-slot，
+         *      但若所有 radix 打成一包（190K），
+         *      Dialog / Dropdown / Tabs / Select 等首屏用不到的
+         *      组件也会被一并加载。
+         * 拆分后首屏只需加载 slot 那几 KB，其余按需拉取。
+         */
         manualChunks(id: string) {
-          if (!id.includes('node_modules')) return;
+          if (!id.includes('node_modules')) return undefined;
+
+          // React 核心（首屏必需）
           if (/node_modules\/(react|react-dom|react-router|react-router-dom|scheduler)\//.test(id)) {
             return 'react-vendor';
           }
-          if (id.includes('@radix-ui') || id.includes('sonner') || id.includes('lucide-react')) {
-            return 'ui-vendor';
+
+          // radix 按组件拆分：首屏只拉 slot
+          const radix = id.match(/node_modules\/@radix-ui\/react-([a-z-]+)\//);
+          if (radix) return `radix-${radix[1]}`;
+
+          // 图标库体积大且页面间共用，单独成包便于缓存
+          if (id.includes('lucide-react')) return 'icons';
+          if (id.includes('sonner')) return 'toast';
+
+          // 其余小依赖合并
+          if (
+            id.includes('clsx') ||
+            id.includes('tailwind-merge') ||
+            id.includes('class-variance-authority')
+          ) {
+            return 'vendor';
           }
-          return 'vendor';
+
+          return undefined;
         },
       },
     },

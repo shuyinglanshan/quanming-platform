@@ -7,9 +7,73 @@
     <meta name="description" content="小天才圈名平台 · 记录、检索并守护每一个独特的圈名，支持归属权审核与多平台绑定。" />
     <title>小天才圈名平台 · 圈名归属登记</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='%230b0b14'/%3E%3Ccircle cx='32' cy='32' r='16' fill='none' stroke='url(%23g)' stroke-width='3'/%3E%3Ccircle cx='32' cy='32' r='5' fill='url(%23g)'/%3E%3C/svg%3E" />
+
+    <!-- 极验域名预连接：减少人机验证弹出时的握手延迟 -->
+    <link rel="preconnect" href="https://static.geetest.com" crossorigin />
+    <link rel="dns-prefetch" href="https://static.geetest.com" />
+    <link rel="preconnect" href="https://gcaptcha4.geetest.com" crossorigin />
+    <link rel="dns-prefetch" href="https://gcaptcha4.geetest.com" />
+
+    <!--
+      首屏骨架：在 JS 下载解析完成前先渲染品牌与加载提示
+      作用：弱网/低端设备上，用户不会面对长时间纯黑屏，
+           感知等待时间明显缩短
+    -->
+    <style>
+      #app-boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: #07070d;
+        color: #94a3b8;
+        font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+        z-index: 9999;
+        transition: opacity 0.25s ease;
+      }
+      #app-boot .boot-mark {
+        display: grid;
+        place-items: center;
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+        background: radial-gradient(circle at 30% 30%, rgba(167, 139, 250, 0.25), rgba(34, 211, 238, 0.1));
+        font-size: 24px;
+        font-weight: 700;
+        color: #c4b5fd;
+        letter-spacing: -1px;
+      }
+      #app-boot .boot-name {
+        font-size: 15px;
+        letter-spacing: 0.08em;
+        color: #e2e8f0;
+      }
+      #app-boot .boot-ring {
+        width: 22px;
+        height: 22px;
+        border: 2px solid rgba(167, 139, 250, 0.25);
+        border-top-color: #a78bfa;
+        border-radius: 50%;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      @keyframes boot-spin {
+        to { transform: rotate(360deg); }
+      }
+      /* 尊重用户「减少动效」偏好（无障碍） */
+      @media (prefers-reduced-motion: reduce) {
+        #app-boot .boot-ring { animation: none; opacity: 0.6; }
+      }
+    </style>
   </head>
   <body>
+    <div id="app-boot">
+      <div class="boot-mark">圈</div>
+      <div class="boot-name">小天才圈名</div>
+      <div class="boot-ring"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-  </body>
 </html>
